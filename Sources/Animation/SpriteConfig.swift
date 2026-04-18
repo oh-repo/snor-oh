@@ -34,23 +34,23 @@ enum SpriteConfig {
             }
         case "samurai":
             switch status {
-            case .disconnected:  return .square("SamuraiSleep",   3,  128)
-            case .busy:          return .square("SamuraiBark",    6,  128)
-            case .service:       return .square("SamuraiSniff",   8,  128)
-            case .idle:          return .square("SamuraiSitting", 6,  128)
-            case .searching:     return .square("SamuraiIdle",    8,  128)
-            case .initializing:  return .square("SamuraiIdle",    8,  128)
-            case .visiting:      return .square("SamuraiSitting", 6,  128)
+            case .disconnected:  return .init(filename: "SamuraiSleep",   frames: 3,  frameWidth: 128, frameHeight: 84, row: 0, subdirectory: nil)
+            case .busy:          return .init(filename: "SamuraiBark",    frames: 6,  frameWidth: 128, frameHeight: 84, row: 0, subdirectory: nil)
+            case .service:       return .init(filename: "SamuraiSniff",   frames: 8,  frameWidth: 128, frameHeight: 84, row: 0, subdirectory: nil)
+            case .idle:          return .init(filename: "SamuraiSitting", frames: 6,  frameWidth: 128, frameHeight: 84, row: 0, subdirectory: nil)
+            case .searching:     return .init(filename: "SamuraiIdle",    frames: 8,  frameWidth: 128, frameHeight: 84, row: 0, subdirectory: nil)
+            case .initializing:  return .init(filename: "SamuraiIdle",    frames: 8,  frameWidth: 128, frameHeight: 84, row: 0, subdirectory: nil)
+            case .visiting:      return .init(filename: "SamuraiSitting", frames: 6,  frameWidth: 128, frameHeight: 84, row: 0, subdirectory: nil)
             }
         case "hancock":
             switch status {
-            case .disconnected:  return .square("HancockSleep",    1, 128)
-            case .busy:          return .square("HancockBark",     9, 128)
-            case .service:       return .square("HancockSniff",   18, 128)
-            case .idle:          return .square("HancockSitting", 10, 128)
-            case .searching:     return .square("HancockIdle",    17, 128)
-            case .initializing:  return .square("HancockIdle",    17, 128)
-            case .visiting:      return .square("HancockSitting", 10, 128)
+            case .disconnected:  return .init(filename: "HancockSleep",    frames: 1,  frameWidth: 128, frameHeight: 83, row: 0, subdirectory: nil)
+            case .busy:          return .init(filename: "HancockBark",     frames: 9,  frameWidth: 128, frameHeight: 83, row: 0, subdirectory: nil)
+            case .service:       return .init(filename: "HancockSniff",   frames: 18, frameWidth: 128, frameHeight: 83, row: 0, subdirectory: nil)
+            case .idle:          return .init(filename: "HancockSitting", frames: 10, frameWidth: 128, frameHeight: 83, row: 0, subdirectory: nil)
+            case .searching:     return .init(filename: "HancockIdle",    frames: 17, frameWidth: 128, frameHeight: 83, row: 0, subdirectory: nil)
+            case .initializing:  return .init(filename: "HancockIdle",    frames: 17, frameWidth: 128, frameHeight: 83, row: 0, subdirectory: nil)
+            case .visiting:      return .init(filename: "HancockSitting", frames: 10, frameWidth: 128, frameHeight: 83, row: 0, subdirectory: nil)
             }
         default:
             // Custom pets: look up from CustomOhhManager
