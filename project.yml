@@ -1,0 +1,62 @@
+name: SnorOhSwift
+options:
+  bundleIdPrefix: com.snoroh
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_ENTITLEMENTS: Entitlements.plist
+    ENABLE_HARDENED_RUNTIME: YES
+    INFOPLIST_FILE: Info.plist
+
+packages:
+  swift-nio:
+    url: https://github.com/apple/swift-nio
+    from: "2.65.0"
+
+targets:
+  SnorOhSwift:
+    type: application
+    platform: macOS
+    sources:
+      - Sources
+    resources:
+      - path: Resources/Sprites
+        type: folder
+        buildPhase: resources
+      - path: Resources/Scripts
+        type: folder
+        buildPhase: resources
+      - path: Resources/Sounds
+        type: folder
+        buildPhase: resources
+      - path: Resources/Assets.xcassets
+    dependencies:
+      - package: swift-nio
+        product: NIO
+      - package: swift-nio
+        product: NIOHTTP1
+      - sdk: Network.framework
+      - sdk: CoreGraphics.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snoroh.swift
+        PRODUCT_NAME: snor-oh
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: 1
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        COMBINE_HIDPI_IMAGES: YES
+
+  SnorOhSwiftTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+    dependencies:
+      - target: SnorOhSwift
