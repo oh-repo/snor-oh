@@ -240,13 +240,25 @@ struct SnorOhPanelView: View {
 
     // MARK: - Content Area (mascot left + project list right)
 
+    /// Fixed square container size for the mascot, based on panel size tier.
+    private var mascotContainerSize: CGFloat {
+        switch size {
+        case .compact: return 64
+        case .regular: return 80
+        case .large:   return 96
+        }
+    }
+
     private var contentArea: some View {
         HStack(alignment: .center, spacing: 0) {
-            // Main mascot — square container, vertically centered
-            AnimatedSpriteView(engine: spriteEngine)
-                .frame(width: mascotSize, height: mascotSize)
-                .shadow(color: glowColor, radius: glowMode == "off" ? 0 : 8)
-                .padding(8)
+            // Fixed square container — mascot always centered within it
+            ZStack {
+                AnimatedSpriteView(engine: spriteEngine)
+                    .frame(width: mascotSize, height: mascotSize)
+                    .shadow(color: glowColor, radius: glowMode == "off" ? 0 : 8)
+            }
+            .frame(width: mascotContainerSize, height: mascotContainerSize)
+            .padding(4)
 
             // Project list
             VStack(spacing: 4) {
@@ -280,7 +292,10 @@ struct SnorOhCard: View {
 
             Spacer()
 
-            statusPill
+            // Only show status pill when not idle
+            if project.status != .idle {
+                statusPill
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
