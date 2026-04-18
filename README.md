@@ -1,4 +1,4 @@
-# snor-oh Swift
+# snor-oh
 
 A native macOS desktop mascot that reacts to your terminal and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) activity in real-time. Built with SwiftUI + SwiftNIO.
 
@@ -18,7 +18,7 @@ A pixel dog floats on your screen, watching what you do: running commands turns 
 
 ### From DMG
 
-1. Download `snor-oh-0.1.0.dmg` from the [Releases](https://github.com/vietnguyenhoangw/snor-oh-swift/releases) page
+1. Download `snor-oh-0.1.0.dmg` from the [Releases](https://github.com/thanh-dong/snor-oh/releases) page
 2. Open the DMG and drag **snor-oh** to Applications
 3. Launch snor-oh from Applications
 4. On first launch, the setup wizard will configure everything automatically
@@ -26,8 +26,8 @@ A pixel dog floats on your screen, watching what you do: running commands turns 
 ### From Source
 
 ```bash
-git clone https://github.com/vietnguyenhoangw/snor-oh-swift.git
-cd snor-oh-swift
+git clone https://github.com/thanh-dong/snor-oh.git
+cd snor-oh
 
 # Development
 swift build
@@ -82,7 +82,7 @@ source /Applications/snor-oh.app/Contents/Resources/Scripts/terminal-mirror.fish
 - **Command starts** (`preexec`) - Sends `state=busy` to the mascot. Long-running dev servers (`start`, `dev`, `serve`, `watch`) are classified as `service` (brief blue flash).
 - **Command ends** (`precmd`) - Sends `state=idle`, mascot returns to idle animation.
 - **Heartbeat** - Background `curl` every 20 seconds keeps the session alive. Sessions without a heartbeat for 40 seconds are removed.
-- **Multi-session** - Each terminal gets its own session (tracked by PID). The sidebar shows per-project status.
+- **Multi-session** - Each terminal gets its own session (tracked by PID). The panel shows per-project status.
 
 ## Claude Code Integration
 
@@ -123,8 +123,9 @@ Claude Code hooks in `~/.claude/settings.json` notify the mascot on:
 
 | Tab | Options |
 |-----|---------|
-| **General** | Theme (dark/light/system), glow effect, speech bubbles, auto-start at login, hide dock icon, tray icon visibility |
-| **Mime** | Nickname, display scale (0.5x-2x), pet selection (4 built-in + custom), import/export `.snoroh` files, delete custom pets |
+| **General** | Theme (dark/light/system), glow effect, speech bubbles, card size (compact/regular/large), auto-start at login, hide dock icon, tray icon visibility |
+| **Mime** | Nickname, display scale (0.5x-2x), pet selection (4 built-in + custom), import/export `.snoroh` files, manage custom pets |
+| **Claude Code** | Plugin manager (enable/disable, view bundled skills), MCP servers (global + per-project), slash commands (with content preview), standalone skills, hooks (grouped by event, own-hook protection) |
 | **About** | Version info, GitHub link, dev mode (10-click secret) |
 
 ### Built-in Pets
@@ -159,7 +160,7 @@ Export/import custom pets as `.snoroh` files (JSON with base64-encoded PNGs).
 
 ## Multi-Session & Projects
 
-When multiple terminals are open, the sidebar shows a per-project view:
+When multiple terminals are open, the panel shows a per-project view:
 
 - Each terminal session is tracked by PID + working directory
 - Sessions in the same `cwd` are grouped into a project
@@ -182,7 +183,7 @@ snor-oh discovers other instances on your local network via Bonjour:
 
 - Service type: `_snor-oh._tcp`
 - TXT records: `nickname`, `pet`, `port`
-- Peers appear in the sidebar with their pet sprite and nickname
+- Peers appear in the panel with their pet sprite and nickname
 - Click a peer to "visit" them (your pet appears on their screen for 15 seconds)
 
 ## HTTP API
@@ -235,19 +236,27 @@ swift build 2>&1 | head -5
 ```
 Shell hooks (curl) --> HTTP :1234 --> SessionManager --> SwiftUI Views
 Claude Code <--stdio--> MCP server (Node.js) <--HTTP--> :1234 --> SwiftUI Views
-Bonjour (NWBrowser/NWListener) --> PeerDiscovery --> SessionManager --> SidebarView
+Bonjour (NWBrowser/NWListener) --> PeerDiscovery --> SessionManager --> PanelView
 ```
 
 | Module | Files | Responsibility |
 |--------|-------|---------------|
-| Core | Types, SessionManager, Watchdog, HTTPServer | State management, HTTP API |
+| Core | Types, SessionManager, Watchdog, HTTPServer, ClaudeCodeConfig | State management, HTTP API, Claude Code config I/O |
 | App | SnorOhApp, AppDelegate | Lifecycle, menu bar, window management |
 | Animation | SpriteConfig, SpriteCache, SpriteEngine | Sprite sheets, frame extraction, animation |
 | Sprites | CustomMimeManager, SmartImport, MimeExporter | Custom pet CRUD, sprite sheet processing |
-| Views | MascotWindow/View, StatusPill, SpeechBubble, Sidebar, Settings, Setup | UI layer |
+| Views | SnorOhPanelWindow/View, MascotView, StatusPill, SpeechBubble, Settings, ClaudeCodeSettings, Setup | UI layer |
 | Network | GitStatus, PeerDiscovery, VisitManager | Git polling, Bonjour, peer visits |
 | Setup | MCPInstaller, ClaudeHooks | First-launch configuration |
-| Util | Logger, Defaults | Logging, UserDefaults keys |
+| Util | Logger, Defaults, SpriteAssignment | Logging, UserDefaults keys, per-project pet assignment |
+
+## Acknowledgments
+
+snor-oh would not exist without the inspiration and groundwork from these projects:
+
+- **[ani-mime](https://github.com/vietnguyenhoangw/ani-mime)** by [@vietnguyenhoangw](https://github.com/vietnguyenhoangw) - The original desktop mascot for Claude Code that started it all. ani-mime's Tauri-based architecture, sprite animation system, MCP integration, and peer discovery design were the foundation that snor-oh was built upon. Thank you for creating such a delightful concept and sharing it with the community.
+
+- **[floatify](https://github.com/HiepPP/floatify)** by [@HiepPP](https://github.com/HiepPP) - The floating panel design and per-project session card layout that inspired snor-oh's unified panel UI. floatify's approach to presenting multi-session information in a compact, always-visible panel shaped how snor-oh displays project status. Thank you for the elegant design direction.
 
 ## License
 
