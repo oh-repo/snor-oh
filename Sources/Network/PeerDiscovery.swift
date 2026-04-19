@@ -24,8 +24,31 @@ final class PeerDiscovery {
 
     func start() {
         instanceName = sessionManager.nickname + pidSuffix
+        triggerLocalNetworkPrompt()
         startAdvertising()
         startBrowsing()
+    }
+
+    /// Trigger the macOS Local Network permission prompt by attempting a
+    /// multicast DNS connection. NWBrowser alone may not trigger the prompt
+    /// on ad-hoc signed apps.
+    private func triggerLocalNetworkPrompt() {
+        let host = NWEndpoint.Host("224.0.0.251")  // mDNS multicast address
+        let port = NWEndpoint.Port(integerLiteral: 5353)
+        let connection = NWConnection(host: host, port: port, using: .udp)
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready, .failed, .cancelled:
+                connection.cancel()
+            default:
+                break
+            }
+        }
+        connection.start(queue: queue)
+        // Cancel after 2s regardless — we just need to trigger the prompt
+        queue.asyncAfter(deadline: .now() + 2) {
+            connection.cancel()
+        }
     }
 
     func stop() {

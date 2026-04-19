@@ -2,8 +2,8 @@ import Foundation
 import NIO
 import NIOHTTP1
 
-/// Lightweight HTTP server on 127.0.0.1:1234 using SwiftNIO.
-/// Handles shell hook status/heartbeat, MCP bridge, peer visits, and debug.
+/// Lightweight HTTP server on 0.0.0.0:1234 using SwiftNIO.
+/// Binds to all interfaces so peers on LAN can send /visit requests.
 final class HTTPServer {
     private let group: MultiThreadedEventLoopGroup
     private var channel: Channel?
@@ -28,7 +28,7 @@ final class HTTPServer {
             }
             .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
 
-        channel = try bootstrap.bind(host: "127.0.0.1", port: port).wait()
+        channel = try bootstrap.bind(host: "0.0.0.0", port: port).wait()
     }
 
     func stop() {
