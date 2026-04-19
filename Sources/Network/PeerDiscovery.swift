@@ -3,12 +3,8 @@ import Network
 
 /// Discovers peers on the local network via Bonjour (DNS-SD).
 ///
-/// Peers are added immediately on discovery (even before TXT records arrive).
-/// TXT records (nickname, pet, port, ip) are extracted when available and
-/// the peer is updated via a `.changed` event.
-///
-/// The advertised `ip` TXT field contains this machine's local IPv4 address
-/// so peers can send messages directly without hostname resolution.
+/// Peers are added immediately on discovery. IP is resolved in the background
+/// via NWConnection to the Bonjour endpoint and the peer is updated when ready.
 final class PeerDiscovery {
     private let sessionManager: SessionManager
     private var listener: NWListener?
@@ -43,7 +39,7 @@ final class PeerDiscovery {
 
     // MARK: - Local IP
 
-    private static func localIPAddress() -> String? {
+    static func localIPAddress() -> String? {
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return nil }
         defer { freeifaddrs(ifaddr) }
@@ -118,7 +114,18 @@ final class PeerDiscovery {
         browser = NWBrowser(for: descriptor, using: .tcp)
 
         browser?.browseResultsChangedHandler = { [weak self] _, changes in
-            self?.handleBrowseChanges(changes: changes)
+            for change in changes {
+                switch change {
+                case .added(let result), .changed(old: _, new: let result, flags: _):
+                    self?.handlePeerFound(result)
+                case .removed(let result):
+                    self?.handlePeerRemoved(result)
+                case .identical:
+                    break
+                @unknown default:
+                    break
+                }
+            }
         }
 
         browser?.stateUpdateHandler = { state in
@@ -137,21 +144,6 @@ final class PeerDiscovery {
         browser?.start(queue: queue)
     }
 
-    private func handleBrowseChanges(changes: Set<NWBrowser.Result.Change>) {
-        for change in changes {
-            switch change {
-            case .added(let result), .changed(old: _, new: let result, flags: _):
-                handlePeerFound(result)
-            case .removed(let result):
-                handlePeerRemoved(result)
-            case .identical:
-                break
-            @unknown default:
-                break
-            }
-        }
-    }
-
     private func handlePeerFound(_ result: NWBrowser.Result) {
         guard case .service(let name, _, _, _) = result.endpoint else { return }
         if name == instanceName || name.hasSuffix(pidSuffix) { return }
@@ -160,7 +152,7 @@ final class PeerDiscovery {
         var nickname = name
         var pet = "sprite"
         var httpPort: UInt16 = 1234
-        var ip: String?
+        var txtIP: String?
 
         if case .bonjour(let txtRecord) = result.metadata {
             for entry in txtRecord {
@@ -169,28 +161,75 @@ final class PeerDiscovery {
                 case "nickname": nickname = val
                 case "pet":      pet = val
                 case "port":     if let p = UInt16(val) { httpPort = p }
-                case "ip":       ip = val
+                case "ip":       txtIP = val
                 default:         break
                 }
             }
         }
 
-        // Use IP from TXT if available, otherwise fall back to service name
-        let host = ip ?? "\(name).local"
+        if let ip = txtIP {
+            // Have IP from TXT — add peer directly
+            print("[discovery] peer ready: \(nickname) ip=\(ip) port=\(httpPort)")
+            let peer = PeerInfo(instanceName: name, nickname: nickname, pet: pet,
+                                host: ip, port: httpPort, ip: ip, endpoint: result.endpoint)
+            DispatchQueue.main.async { [weak self] in
+                self?.sessionManager.addPeer(peer)
+            }
+        } else {
+            // No IP from TXT — add with placeholder, resolve via NWConnection
+            print("[discovery] peer found: \(nickname) (resolving IP...)")
+            let peer = PeerInfo(instanceName: name, nickname: nickname, pet: pet,
+                                host: name, port: httpPort, ip: nil, endpoint: result.endpoint)
+            DispatchQueue.main.async { [weak self] in
+                self?.sessionManager.addPeer(peer)
+            }
 
-        print("[discovery] peer: \(nickname) host=\(host) port=\(httpPort)\(ip != nil ? "" : " (no ip yet)")")
-
-        let peer = PeerInfo(
-            instanceName: name,
-            nickname: nickname,
-            pet: pet,
-            host: host,
-            port: httpPort,
-            ip: ip,
-            endpoint: result.endpoint
-        )
-        DispatchQueue.main.async { [weak self] in
-            self?.sessionManager.addPeer(peer)
+            // Resolve IP by connecting to Bonjour endpoint (on discovery queue)
+            let connection = NWConnection(to: result.endpoint, using: .tcp)
+            var resolved = false
+            connection.stateUpdateHandler = { [weak self, name, nickname, pet, httpPort] state in
+                guard !resolved else { return }
+                switch state {
+                case .ready:
+                    resolved = true
+                    var ip: String?
+                    if let path = connection.currentPath,
+                       let remote = path.remoteEndpoint,
+                       case .hostPort(let host, _) = remote {
+                        switch host {
+                        case .ipv4(let addr): ip = "\(addr)"
+                        case .ipv6(let addr):
+                            ip = "\(addr)".components(separatedBy: "%").first
+                        default: break
+                        }
+                    }
+                    connection.cancel()
+                    if let ip {
+                        print("[discovery] resolved \(nickname) → \(ip)")
+                        let updated = PeerInfo(instanceName: name, nickname: nickname, pet: pet,
+                                               host: ip, port: httpPort, ip: ip, endpoint: nil)
+                        DispatchQueue.main.async {
+                            self?.sessionManager.addPeer(updated)
+                        }
+                    }
+                case .failed(let err):
+                    resolved = true
+                    print("[discovery] resolve failed for \(nickname): \(err)")
+                    connection.cancel()
+                case .cancelled:
+                    break
+                default:
+                    break
+                }
+            }
+            connection.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 5) {
+                if !resolved {
+                    resolved = true
+                    print("[discovery] resolve timeout for \(nickname)")
+                    connection.cancel()
+                }
+            }
         }
     }
 

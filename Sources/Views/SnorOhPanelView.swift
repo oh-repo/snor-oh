@@ -165,77 +165,17 @@ struct SnorOhPanelView: View {
     }
 
     private func sendMessageToPeer(_ peer: PeerInfo, message: String) {
+        guard let ip = peer.ip else {
+            print("[peer] no IP resolved yet for \(peer.nickname)")
+            bubbleManager.show("Peer IP not resolved yet, try again in a moment", durationMs: 3000)
+            return
+        }
+
         let sender = sessionManager.nickname
-        let port = peer.port
-        let nickname = peer.nickname
+        let url = "http://\(ip):\(peer.port)/peer/message"
+        print("[peer] sending to \(peer.nickname) at \(url)")
 
-        // If we already have the IP, send directly
-        if let ip = peer.ip {
-            Self.postMessage(to: ip, port: port, sender: sender, message: message, nickname: nickname)
-            return
-        }
-
-        // Resolve IP by connecting to the Bonjour endpoint
-        guard let endpoint = peer.endpoint else {
-            print("[peer] no endpoint for \(nickname), can't resolve IP")
-            return
-        }
-
-        print("[peer] resolving IP for \(nickname) via Bonjour endpoint...")
-        let queue = DispatchQueue(label: "com.snoroh.resolve")
-        let connection = NWConnection(to: endpoint, using: .tcp)
-        var resolved = false
-
-        connection.stateUpdateHandler = { state in
-            guard !resolved else { return }
-            switch state {
-            case .ready:
-                resolved = true
-                var ip: String?
-                if let path = connection.currentPath,
-                   let remote = path.remoteEndpoint,
-                   case .hostPort(let host, _) = remote {
-                    switch host {
-                    case .ipv4(let addr): ip = "\(addr)"
-                    case .ipv6(let addr):
-                        let raw = "\(addr)"
-                        ip = raw.components(separatedBy: "%").first
-                    default: break
-                    }
-                }
-                connection.cancel()
-
-                if let ip {
-                    print("[peer] resolved \(nickname) → \(ip)")
-                    Self.postMessage(to: ip, port: port, sender: sender, message: message, nickname: nickname)
-                } else {
-                    print("[peer] resolved \(nickname) but no IP in path")
-                }
-
-            case .failed(let error):
-                resolved = true
-                print("[peer] resolve failed for \(nickname): \(error)")
-                connection.cancel()
-            default:
-                break
-            }
-        }
-        connection.start(queue: queue)
-
-        queue.asyncAfter(deadline: .now() + 5) {
-            if !resolved {
-                resolved = true
-                print("[peer] resolve timeout for \(nickname)")
-                connection.cancel()
-            }
-        }
-    }
-
-    private static func postMessage(to ip: String, port: UInt16, sender: String, message: String, nickname: String) {
-        let url = "http://\(ip):\(port)/peer/message"
-        print("[peer] sending to \(nickname) at \(url)")
-
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak bubbleManager] in
             guard let requestURL = URL(string: url) else { return }
             var request = URLRequest(url: requestURL)
             request.httpMethod = "POST"
@@ -246,9 +186,12 @@ struct SnorOhPanelView: View {
             )
             URLSession.shared.dataTask(with: request) { _, response, error in
                 if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                    print("[peer] message sent to \(nickname)")
+                    print("[peer] message sent to \(peer.nickname)")
                 } else if let error {
                     print("[peer] send failed: \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        bubbleManager?.show("Failed to send: \(error.localizedDescription)", durationMs: 4000)
+                    }
                 }
             }.resume()
         }
