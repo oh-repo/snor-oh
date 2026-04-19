@@ -54,7 +54,9 @@ enum ClaudeHooks {
         }
     }
 
-    /// Migrate existing hooks: add `|| true` and `cwd=$PWD` if missing.
+    /// Migrate existing hooks:
+    /// 1. Update outdated commands (pid=0 → $PPID, add cwd=$PWD)
+    /// 2. Move snor-oh hooks out of restrictive matchers into their own empty-matcher entry
     static func migrate() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let settingsURL = home.appendingPathComponent(".claude/settings.json")
@@ -62,7 +64,6 @@ enum ClaudeHooks {
         guard let data = try? Data(contentsOf: settingsURL),
               let content = String(data: data, encoding: .utf8) else { return }
 
-        // Quick check: skip parsing if no snor-oh hooks exist at all
         guard content.contains(aniMarker) else { return }
 
         guard var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -71,22 +72,68 @@ enum ClaudeHooks {
         var patched = false
         for (event, value) in hooks {
             guard var entries = value as? [[String: Any]] else { continue }
-            for i in entries.indices {
-                guard var hooksList = entries[i]["hooks"] as? [[String: Any]] else { continue }
-                for j in hooksList.indices {
-                    guard let cmd = hooksList[j]["command"] as? String,
-                          cmd.contains(aniMarker) else { continue }
 
-                    // Replace any outdated snor-oh hook with the current version.
-                    // Detects old hooks by checking for pid=0 (now $PPID) or missing cwd=.
+            // Collect snor-oh commands to move into their own entry
+            var snorohCmds: [String] = []
+
+            for i in entries.indices {
+                let matcher = entries[i]["matcher"] as? String ?? ""
+                guard let hooksList = entries[i]["hooks"] as? [[String: Any]] else { continue }
+
+                var updated: [[String: Any]] = []
+                for hook in hooksList {
+                    guard let cmd = hook["command"] as? String,
+                          cmd.contains(aniMarker) else {
+                        updated.append(hook)
+                        continue
+                    }
+
+                    // Update outdated commands
+                    var newCmd = cmd
                     if cmd.contains("pid=0") || !cmd.contains("cwd=") {
-                        let newCmd = cmd.contains("state=busy") ? busyCmd : idleCmd
-                        hooksList[j]["command"] = newCmd
+                        newCmd = cmd.contains("state=busy") ? busyCmd : idleCmd
+                    }
+
+                    if !matcher.isEmpty {
+                        // Hook is in a restrictive matcher — move it out
+                        snorohCmds.append(newCmd)
                         patched = true
+                    } else if newCmd != cmd {
+                        // In empty matcher, just update the command
+                        var h = hook
+                        h["command"] = newCmd
+                        updated.append(h)
+                        patched = true
+                    } else {
+                        updated.append(hook)
                     }
                 }
-                entries[i]["hooks"] = hooksList
+                entries[i]["hooks"] = updated
             }
+
+            // Remove empty entries
+            entries.removeAll { entry in
+                guard let hooksList = entry["hooks"] as? [[String: Any]] else { return true }
+                return hooksList.isEmpty
+            }
+
+            // Add snor-oh hooks in their own empty-matcher entry
+            if !snorohCmds.isEmpty {
+                // Check if an empty-matcher snor-oh entry already exists
+                let hasEmpty = entries.contains { entry in
+                    let matcher = entry["matcher"] as? String ?? ""
+                    guard matcher.isEmpty else { return false }
+                    guard let hooksList = entry["hooks"] as? [[String: Any]] else { return false }
+                    return hooksList.contains { ($0["command"] as? String)?.contains(aniMarker) == true }
+                }
+                if !hasEmpty {
+                    let hooksArray = snorohCmds.map { cmd -> [String: Any] in
+                        ["type": "command", "command": cmd]
+                    }
+                    entries.append(["matcher": "", "hooks": hooksArray])
+                }
+            }
+
             hooks[event] = entries
         }
 
@@ -95,7 +142,7 @@ enum ClaudeHooks {
         settings["hooks"] = hooks
         if let newData = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
             try? newData.write(to: settingsURL, options: .atomic)
-            print("[setup] migrated claude hooks: added cwd=$PWD for project tracking")
+            print("[setup] migrated claude hooks: fixed matchers and commands")
         }
     }
 
@@ -106,31 +153,25 @@ enum ClaudeHooks {
     private static func addHook(to hooks: inout [String: Any], event: String, command: String) -> Int {
         var entries = hooks[event] as? [[String: Any]] ?? []
 
-        // Check if snor-oh hook already exists
-        let hasAniHook = entries.contains { entry in
+        // Check if snor-oh hook already exists in any entry
+        let hasHook = entries.contains { entry in
             guard let hooksList = entry["hooks"] as? [[String: Any]] else { return false }
             return hooksList.contains { h in
                 (h["command"] as? String)?.contains(aniMarker) == true
             }
         }
 
-        if hasAniHook {
+        if hasHook {
             return 0
         }
 
-        if entries.isEmpty {
-            entries.append([
-                "matcher": "",
-                "hooks": [["type": "command", "command": command]]
-            ])
-        } else {
-            // Append to first matcher's hooks array
-            var firstEntry = entries[0]
-            var hooksList = firstEntry["hooks"] as? [[String: Any]] ?? []
-            hooksList.append(["type": "command", "command": command])
-            firstEntry["hooks"] = hooksList
-            entries[0] = firstEntry
-        }
+        // Always create a separate entry with empty matcher (= all tools).
+        // Never append to existing entries that may have restrictive matchers
+        // (e.g., "Grep|Glob|Bash" from gitnexus).
+        entries.append([
+            "matcher": "",
+            "hooks": [["type": "command", "command": command]]
+        ])
 
         hooks[event] = entries
         print("[setup] added claude hook for \(event)")

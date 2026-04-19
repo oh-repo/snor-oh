@@ -41,6 +41,7 @@ struct GeneralTab: View {
     @AppStorage(DefaultsKey.peerDiscoveryEnabled) private var peerDiscoveryEnabled = true
     @State private var autoStartEnabled = false
     @State private var autoStartError: String?
+    @State private var shellHookConfigured = false
     @State private var mcpInstalled = false
     @State private var mcpRegistered = false
     @State private var mcpInstalling = false
@@ -96,6 +97,15 @@ struct GeneralTab: View {
             }
 
             Section("Claude Code Integration") {
+                HStack(spacing: 6) {
+                    Image(systemName: shellHookConfigured ? "checkmark.circle.fill" : "xmark.circle")
+                        .foregroundStyle(shellHookConfigured ? .green : .orange)
+                        .font(.caption)
+                    Text("Shell Hooks")
+                    Text(shellHookConfigured ? "configured" : "not sourced in shell config")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 HStack(spacing: 6) {
                     Image(systemName: mcpInstalled ? "checkmark.circle.fill" : "xmark.circle")
                         .foregroundStyle(mcpInstalled ? .green : .red)
@@ -155,6 +165,24 @@ struct GeneralTab: View {
     private func refreshMCPStatus() {
         mcpInstalled = MCPInstaller.isServerInstalled
         mcpRegistered = MCPInstaller.isRegistered
+        shellHookConfigured = checkShellHookConfigured()
+    }
+
+    /// Check if terminal-mirror is sourced in any shell config file.
+    private func checkShellHookConfigured() -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let configs = [
+            home.appendingPathComponent(".zshrc"),
+            home.appendingPathComponent(".bashrc"),
+            home.appendingPathComponent(".config/fish/config.fish"),
+        ]
+        for url in configs {
+            if let content = try? String(contentsOf: url, encoding: .utf8),
+               content.contains("terminal-mirror") {
+                return true
+            }
+        }
+        return false
     }
 
     private func installMCP() {
