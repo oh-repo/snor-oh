@@ -5,17 +5,14 @@ import Network
 /// Advertises this instance and browses for other snor-oh instances.
 ///
 /// Service type: `_snor-oh._tcp`
-/// TXT records: `nickname`, `pet`, `port` (HTTP port for visits)
+/// TXT records: `nickname`, `pet`, `port`, `hostname`
 final class PeerDiscovery {
     private let sessionManager: SessionManager
     private var listener: NWListener?
     private var browser: NWBrowser?
     private let queue = DispatchQueue(label: "com.snoroh.discovery", qos: .utility)
 
-    /// Our advertised instance name, used to filter self-discovery.
     private(set) var instanceName: String = ""
-
-    /// The PID-based suffix ensures uniqueness even if nicknames collide.
     private let pidSuffix = "-\(ProcessInfo.processInfo.processIdentifier)"
 
     init(sessionManager: SessionManager) {
@@ -24,31 +21,8 @@ final class PeerDiscovery {
 
     func start() {
         instanceName = sessionManager.nickname + pidSuffix
-        triggerLocalNetworkPrompt()
         startAdvertising()
         startBrowsing()
-    }
-
-    /// Trigger the macOS Local Network permission prompt by attempting a
-    /// multicast DNS connection. NWBrowser alone may not trigger the prompt
-    /// on ad-hoc signed apps.
-    private func triggerLocalNetworkPrompt() {
-        let host = NWEndpoint.Host("224.0.0.251")  // mDNS multicast address
-        let port = NWEndpoint.Port(integerLiteral: 5353)
-        let connection = NWConnection(host: host, port: port, using: .udp)
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .ready, .failed, .cancelled:
-                connection.cancel()
-            default:
-                break
-            }
-        }
-        connection.start(queue: queue)
-        // Cancel after 2s regardless — we just need to trigger the prompt
-        queue.asyncAfter(deadline: .now() + 2) {
-            connection.cancel()
-        }
     }
 
     func stop() {
@@ -74,10 +48,15 @@ final class PeerDiscovery {
             return
         }
 
+        // Get local hostname for direct addressing (e.g. "MacBook-Pro.local")
+        let hostname = ProcessInfo.processInfo.hostName
+
         var txtRecord = NWTXTRecord()
         txtRecord["nickname"] = sessionManager.nickname
         txtRecord["pet"] = sessionManager.pet
         txtRecord["port"] = "\(sessionManager.httpPort)"
+        txtRecord["hostname"] = hostname
+
         listener?.service = NWListener.Service(
             name: instanceName,
             type: "_snor-oh._tcp",
@@ -87,9 +66,7 @@ final class PeerDiscovery {
         listener?.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
-                if let port = self?.listener?.port?.rawValue {
-                    print("[discovery] advertising as \(self?.instanceName ?? "?") on port \(port)")
-                }
+                print("[discovery] advertising as \(self?.instanceName ?? "?"), hostname=\(hostname)")
             case .failed(let error):
                 print("[discovery] listener failed: \(error)")
             case .waiting(let error):
@@ -123,7 +100,7 @@ final class PeerDiscovery {
             case .failed(let error):
                 print("[discovery] browser failed: \(error)")
             case .waiting(let error):
-                print("[discovery] browser waiting (local network permission needed?): \(error)")
+                print("[discovery] browser waiting: \(error) — check System Settings > Privacy > Local Network")
             default:
                 break
             }
@@ -152,100 +129,39 @@ final class PeerDiscovery {
     private func handlePeerFound(_ result: NWBrowser.Result) {
         guard case .service(let name, _, _, _) = result.endpoint else { return }
 
-        // Skip self — check both exact name and PID suffix
+        // Skip self
         if name == instanceName || name.hasSuffix(pidSuffix) {
             return
         }
 
         // Extract TXT record
-        var nickname = name  // fallback: use service name
+        var nickname = name
         var pet = "sprite"
         var httpPort: UInt16 = 1234
+        var hostname: String?
 
         if case .bonjour(let txtRecord) = result.metadata {
-            // NWTXTRecord key lookup
             if let n = txtRecord["nickname"], !n.isEmpty { nickname = n }
             if let p = txtRecord["pet"], !p.isEmpty { pet = p }
             if let portStr = txtRecord["port"], let p = UInt16(portStr) { httpPort = p }
+            if let h = txtRecord["hostname"], !h.isEmpty { hostname = h }
         }
 
-        print("[discovery] found peer: \(name) nickname=\(nickname) pet=\(pet) port=\(httpPort)")
+        // Use advertised hostname (e.g. "MacBook-Pro.local") — mDNS resolves it
+        // reliably without needing manual IP resolution via NWConnection
+        let host = hostname ?? "\(name).local"
 
-        // Resolve IP: prefer IPv4, use TCP parameters that prefer IPv4
-        let tcpOptions = NWProtocolTCP.Options()
-        let params = NWParameters(tls: nil, tcp: tcpOptions)
-        params.preferNoProxies = true
-        if #available(macOS 14.0, *) {
-            params.requiredInterfaceType = .wifi
-        }
-        let connection = NWConnection(to: result.endpoint, using: params)
-        var resolved = false
+        print("[discovery] found peer: \(nickname) host=\(host) port=\(httpPort)")
 
-        connection.stateUpdateHandler = { [weak self, name, nickname, pet, httpPort] state in
-            guard let self else {
-                connection.cancel()
-                return
-            }
-            switch state {
-            case .ready:
-                guard !resolved else { break }
-                resolved = true
-
-                // Collect all available IPs from the connection path, prefer IPv4
-                var ipv4: String?
-                var ipv6: String?
-                if let path = connection.currentPath,
-                   let endpoint = path.remoteEndpoint,
-                   case .hostPort(let host, _) = endpoint {
-                    switch host {
-                    case .ipv4(let addr): ipv4 = "\(addr)"
-                    case .ipv6(let addr):
-                        // Strip zone ID for URL compatibility
-                        let raw = "\(addr)"
-                        let clean = raw.replacingOccurrences(
-                            of: #"%[a-zA-Z0-9]+"#, with: "", options: .regularExpression
-                        )
-                        ipv6 = "[\(clean)]"
-                    default: break
-                    }
-                }
-                let ip = ipv4 ?? ipv6 ?? "127.0.0.1"
-
-                let peer = PeerInfo(
-                    instanceName: name,
-                    nickname: nickname,
-                    pet: pet,
-                    ip: ip,
-                    port: httpPort
-                )
-                print("[discovery] resolved peer \(nickname) at \(ip):\(httpPort)")
-                DispatchQueue.main.async {
-                    self.sessionManager.addPeer(peer)
-                }
-                connection.cancel()
-
-            case .failed(let error):
-                guard !resolved else { break }
-                resolved = true
-                print("[discovery] failed to resolve \(name): \(error)")
-                connection.cancel()
-
-            case .cancelled:
-                break
-
-            default:
-                break
-            }
-        }
-        connection.start(queue: queue)
-
-        // Timeout: cancel if not resolved within 5s
-        queue.asyncAfter(deadline: .now() + 5) {
-            if !resolved {
-                resolved = true
-                print("[discovery] timeout resolving \(name)")
-                connection.cancel()
-            }
+        let peer = PeerInfo(
+            instanceName: name,
+            nickname: nickname,
+            pet: pet,
+            host: host,
+            port: httpPort
+        )
+        DispatchQueue.main.async { [weak self] in
+            self?.sessionManager.addPeer(peer)
         }
     }
 

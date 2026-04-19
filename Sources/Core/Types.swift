@@ -64,7 +64,7 @@ struct PeerInfo: Identifiable, Sendable {
     let instanceName: String
     let nickname: String
     let pet: String
-    let ip: String
+    let host: String   // hostname.local or IP address
     let port: UInt16
 }
 

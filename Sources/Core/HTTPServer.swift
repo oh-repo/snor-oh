@@ -226,7 +226,7 @@ private final class HTTPHandler: ChannelInboundHandler {
             lines.append("")
             lines.append("Peers (\(sm.peers.count)):")
             for (_, p) in sm.peers {
-                lines.append("  \(p.nickname) (\(p.pet)) @ \(p.ip):\(p.port)")
+                lines.append("  \(p.nickname) (\(p.pet)) @ \(p.host):\(p.port)")
             }
             lines.append("")
             lines.append("Visitors (\(sm.visitors.count)):")

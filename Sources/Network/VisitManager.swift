@@ -30,7 +30,7 @@ final class VisitManager {
         let nickname = sessionManager.nickname
         let pet = sessionManager.pet
         let duration = min(UInt64(15), Self.maxVisitDuration)
-        let targetURL = "http://\(peer.ip):\(peer.port)/visit"
+        let targetURL = "http://\(peer.host):\(peer.port)/visit"
 
         print("[visit] visiting \(peer.nickname) at \(targetURL)")
 
@@ -57,7 +57,7 @@ final class VisitManager {
 
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
-                let endURL = "http://\(peer.ip):\(peer.port)/visit-end"
+                let endURL = "http://\(peer.host):\(peer.port)/visit-end"
                 let endPayload: [String: Any] = [
                     "instance_name": ourInstanceName,
                     "nickname": nickname
@@ -89,7 +89,7 @@ final class VisitManager {
                     "instance_name": self.discovery.instanceName,
                     "nickname": self.sessionManager.nickname
                 ]
-                self.sendPost(to: "http://\(peer.ip):\(peer.port)/visit-end", payload: endPayload)
+                self.sendPost(to: "http://\(peer.host):\(peer.port)/visit-end", payload: endPayload)
             }
             DispatchQueue.main.async {
                 self.sessionManager.clearVisiting()
