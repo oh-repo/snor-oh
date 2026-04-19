@@ -357,27 +357,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showMenuBarBubble(_ message: String, durationSecs: Double = 4.0) {
         guard let button = statusItem?.button else { return }
 
-        // Cancel any pending dismiss
         popoverDismissWork?.cancel()
 
-        // Reuse or create popover
         let popover = menuBarPopover ?? NSPopover()
         menuBarPopover = popover
+
+        let maxWidth: CGFloat = 260
+        let padding: CGFloat = 16
 
         let label = NSTextField(wrappingLabelWithString: message)
         label.font = .systemFont(ofSize: 12, weight: .medium)
         label.textColor = .labelColor
         label.alignment = .center
-        label.maximumNumberOfLines = 2
+        label.maximumNumberOfLines = 5
+        label.preferredMaxLayoutWidth = maxWidth - padding * 2
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
+            container.widthAnchor.constraint(lessThanOrEqualToConstant: maxWidth),
+        ])
 
         let vc = NSViewController()
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
-        label.frame = container.bounds.insetBy(dx: 12, dy: 8)
-        label.autoresizingMask = [.width, .height]
-        container.addSubview(label)
         vc.view = container
         popover.contentViewController = vc
-        popover.contentSize = NSSize(width: 200, height: 40)
         popover.behavior = .applicationDefined
         popover.animates = true
 
