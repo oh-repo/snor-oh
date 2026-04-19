@@ -4,17 +4,53 @@
 
 :root {
   color-scheme: light dark;
+  --bg: #faf7f2;
+  --bg-subtle: #f3ede3;
+  --fg: #1a1612;
+  --fg-muted: #6b655d;
+  --border: #1a16121a;
+  --accent: #ff7849;
+  --accent-fg: #1a1612;
+  --card: #ffffff;
+  --card-border: #1a16120d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d0c0a;
+    --bg-subtle: #17140f;
+    --fg: #f5f0e8;
+    --fg-muted: #8a8378;
+    --border: #f5f0e820;
+    --accent: #ff8a5c;
+    --accent-fg: #0d0c0a;
+    --card: #181512;
+    --card-border: #f5f0e810;
+  }
 }
 
 body {
   font-family: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", sans-serif;
-  background: #fafafa;
-  color: #111;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #0b0b0c;
-    color: #f0f0f0;
-  }
+.dot-grid {
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: -1px -1px;
+}
+
+.pixel {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+.animate-bob {
+  animation: bob 2s ease-in-out infinite;
 }
