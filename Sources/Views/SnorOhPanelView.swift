@@ -121,8 +121,8 @@ struct SnorOhPanelView: View {
 
     private var mascotStage: some View {
         VStack(spacing: 4) {
-            ZStack(alignment: .bottom) {
-                // Main mascot
+            // Main mascot
+            ZStack {
                 let sprite = AnimatedSpriteView(engine: spriteEngine)
                     .frame(width: spriteSize, height: spriteSize)
                 if glowRadius > 0 {
@@ -130,25 +130,23 @@ struct SnorOhPanelView: View {
                 } else {
                     sprite
                 }
+            }
 
-                // Incoming visitors — animated sprites next to mascot
-                if !sessionManager.visitors.isEmpty {
-                    HStack(spacing: 4) {
-                        Spacer()
-                        ForEach(sessionManager.visitors.prefix(3)) { visitor in
-                            VStack(spacing: 2) {
-                                VisitorSprite(pet: visitor.pet)
-                                    .frame(width: 32, height: 32)
-                                Text(visitor.nickname)
-                                    .font(.system(size: 7, weight: .medium))
-                                    .foregroundStyle(isDark ? .white.opacity(0.5) : .black.opacity(0.4))
-                                    .lineLimit(1)
-                            }
+            // Incoming visitors — row below mascot
+            if !sessionManager.visitors.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(sessionManager.visitors.prefix(3)) { visitor in
+                        VStack(spacing: 2) {
+                            VisitorSprite(pet: visitor.pet)
+                                .frame(width: 36, height: 36)
+                            Text(visitor.nickname)
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(isDark ? .white.opacity(0.6) : .black.opacity(0.5))
+                                .lineLimit(1)
                         }
                     }
-                    .padding(.trailing, 4)
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
             // Visiting badge — shown when we're visiting someone

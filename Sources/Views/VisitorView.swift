@@ -1,20 +1,10 @@
 import SwiftUI
 
-/// Renders a visiting peer's sprite with animation and nickname label.
-/// Falls back to the default built-in pet if the visitor's pet isn't available locally
-/// (e.g., custom pets that only exist on the visitor's machine).
+/// Renders a visiting peer's sprite with animation.
+/// Falls back to the default built-in pet if the visitor's pet isn't available locally.
 struct VisitorSprite: View {
     let pet: String
     @State private var engine = SpriteEngine()
-    @State private var useFallback = false
-
-    /// The pet to actually render — original or fallback.
-    private var effectivePet: String {
-        if useFallback {
-            return SpriteConfig.builtInPets.first ?? "sprite"
-        }
-        return pet
-    }
 
     var body: some View {
         Group {
@@ -30,16 +20,27 @@ struct VisitorSprite: View {
             }
         }
         .onAppear {
-            // Check if the pet's sprites are available locally
-            let frames = SpriteCache.shared.frames(pet: pet, status: .idle)
-            if frames.isEmpty && !SpriteConfig.builtInPets.contains(pet) {
-                useFallback = true
-            }
+            let effectivePet = resolvePet(pet)
             engine.setPet(effectivePet)
             engine.setStatus(.visiting)
         }
         .onDisappear {
             engine.stop()
         }
+    }
+
+    /// Check if the pet exists locally. If not, fall back to default built-in.
+    private func resolvePet(_ pet: String) -> String {
+        // Built-in pets are always available
+        if SpriteConfig.builtInPets.contains(pet) {
+            return pet
+        }
+        // Custom pets: check if it exists in the local CustomOhhManager
+        if SpriteConfig.isCustomPet(pet),
+           CustomOhhManager.shared.ohh(withID: pet) != nil {
+            return pet
+        }
+        // Fallback to default
+        return SpriteConfig.builtInPets.first ?? "sprite"
     }
 }
