@@ -41,6 +41,10 @@ begin
   end if;
 end
 $$;
+
+-- Tell PostgREST to reload its schema cache so freshly-created tables
+-- become visible to the REST API immediately.
+notify pgrst, 'reload schema';
 `;
 
 function authorized(req: Request): boolean {
@@ -74,7 +78,10 @@ async function runMigration(): Promise<StepResult> {
   }
   const client = new Client({
     connectionString: url,
-    ssl: { rejectUnauthorized: false },
+    // Supabase non-pooling direct connections present a cert chain
+    // Node doesn't trust out of the box. require: true forces TLS,
+    // rejectUnauthorized: false accepts the self-signed chain.
+    ssl: { require: true, rejectUnauthorized: false },
   });
   try {
     await client.connect();
