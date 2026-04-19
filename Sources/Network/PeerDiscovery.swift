@@ -186,7 +186,8 @@ final class PeerDiscovery {
             pet: pet,
             host: host,
             port: httpPort,
-            ip: ip
+            ip: ip,
+            endpoint: result.endpoint
         )
         DispatchQueue.main.async { [weak self] in
             self?.sessionManager.addPeer(peer)

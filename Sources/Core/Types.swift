@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 // MARK: - Status
 
@@ -59,14 +60,15 @@ struct Session {
 
 // MARK: - Peer / Visitor
 
-struct PeerInfo: Identifiable, Sendable {
+struct PeerInfo: Identifiable {
     var id: String { instanceName }
     let instanceName: String
     let nickname: String
     let pet: String
-    let host: String   // IP address or hostname.local
+    let host: String   // IP address or fallback
     let port: UInt16
-    let ip: String?    // resolved IPv4 from TXT, nil if not yet known
+    let ip: String?    // resolved IPv4 from TXT
+    let endpoint: NWEndpoint?  // Bonjour endpoint for on-demand IP resolution
 }
 
 struct VisitingDog: Identifiable, Sendable {

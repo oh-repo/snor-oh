@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Network
 
 // MARK: - Panel Size
 
@@ -168,29 +169,81 @@ struct SnorOhPanelView: View {
         let port = peer.port
         let nickname = peer.nickname
 
+        // If we already have the IP, send directly
+        if let ip = peer.ip {
+            Self.postMessage(to: ip, port: port, sender: sender, message: message, nickname: nickname)
+            return
+        }
+
+        // Resolve IP by connecting to the Bonjour endpoint
+        guard let endpoint = peer.endpoint else {
+            print("[peer] no endpoint for \(nickname), can't resolve IP")
+            return
+        }
+
+        print("[peer] resolving IP for \(nickname) via Bonjour endpoint...")
+        let queue = DispatchQueue(label: "com.snoroh.resolve")
+        let connection = NWConnection(to: endpoint, using: .tcp)
+        var resolved = false
+
+        connection.stateUpdateHandler = { state in
+            guard !resolved else { return }
+            switch state {
+            case .ready:
+                resolved = true
+                var ip: String?
+                if let path = connection.currentPath,
+                   let remote = path.remoteEndpoint,
+                   case .hostPort(let host, _) = remote {
+                    switch host {
+                    case .ipv4(let addr): ip = "\(addr)"
+                    case .ipv6(let addr):
+                        let raw = "\(addr)"
+                        ip = raw.components(separatedBy: "%").first
+                    default: break
+                    }
+                }
+                connection.cancel()
+
+                if let ip {
+                    print("[peer] resolved \(nickname) → \(ip)")
+                    Self.postMessage(to: ip, port: port, sender: sender, message: message, nickname: nickname)
+                } else {
+                    print("[peer] resolved \(nickname) but no IP in path")
+                }
+
+            case .failed(let error):
+                resolved = true
+                print("[peer] resolve failed for \(nickname): \(error)")
+                connection.cancel()
+            default:
+                break
+            }
+        }
+        connection.start(queue: queue)
+
+        queue.asyncAfter(deadline: .now() + 5) {
+            if !resolved {
+                resolved = true
+                print("[peer] resolve timeout for \(nickname)")
+                connection.cancel()
+            }
+        }
+    }
+
+    private static func postMessage(to ip: String, port: UInt16, sender: String, message: String, nickname: String) {
+        let url = "http://\(ip):\(port)/peer/message"
+        print("[peer] sending to \(nickname) at \(url)")
+
         DispatchQueue.global(qos: .userInitiated).async {
-            // Resolve host to IP if needed
-            let targetIP: String
-            if let ip = peer.ip {
-                targetIP = ip
-            } else {
-                // Resolve via DNS — peer.host might be "Name.local" which needs mDNS
-                targetIP = Self.resolveHostToIP(peer.host) ?? peer.host
-            }
-
-            let url = "http://\(targetIP):\(port)/peer/message"
-            print("[peer] sending message to \(nickname) at \(url)")
-
-            guard let requestURL = URL(string: url) else {
-                print("[peer] invalid URL: \(url)")
-                return
-            }
+            guard let requestURL = URL(string: url) else { return }
             var request = URLRequest(url: requestURL)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.timeoutInterval = 5
-            let payload = ["sender": sender, "message": message]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+            request.httpBody = try? JSONSerialization.data(
+                withJSONObject: ["sender": sender, "message": message]
+            )
             URLSession.shared.dataTask(with: request) { _, response, error in
                 if let http = response as? HTTPURLResponse, http.statusCode == 200 {
                     print("[peer] message sent to \(nickname)")
@@ -199,31 +252,6 @@ struct SnorOhPanelView: View {
                 }
             }.resume()
         }
-    }
-
-    /// Resolve a hostname to IPv4 via getaddrinfo (handles .local mDNS names).
-    private static func resolveHostToIP(_ host: String) -> String? {
-        var hints = addrinfo()
-        hints.ai_family = AF_INET  // IPv4 only
-        hints.ai_socktype = SOCK_STREAM
-        var result: UnsafeMutablePointer<addrinfo>?
-
-        print("[peer] resolving \(host)...")
-        let status = getaddrinfo(host, nil, &hints, &result)
-        guard status == 0, let info = result else {
-            print("[peer] resolve failed for \(host): \(String(cString: gai_strerror(status)))")
-            return nil
-        }
-        defer { freeaddrinfo(result) }
-
-        var addr = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        if getnameinfo(info.pointee.ai_addr, info.pointee.ai_addrlen,
-                       &addr, socklen_t(addr.count), nil, 0, NI_NUMERICHOST) == 0 {
-            let ip = String(cString: addr)
-            print("[peer] resolved \(host) → \(ip)")
-            return ip
-        }
-        return nil
     }
 
     // MARK: - Speech Bubble
