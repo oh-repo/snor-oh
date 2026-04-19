@@ -142,8 +142,8 @@ final class SessionManager {
             sleeping = false
         }
 
+        let oldUI = currentUI
         if newUI != currentUI {
-            let oldUI = currentUI
             currentUI = newUI
 
             if newUI == .idle {
@@ -151,13 +151,14 @@ final class SessionManager {
             } else {
                 idleSince = nil
             }
-
-            NotificationCenter.default.post(
-                name: .statusChanged,
-                object: nil,
-                userInfo: ["status": newUI.rawValue, "previous": oldUI.rawValue]
-            )
         }
+
+        // Always post so observers (status bar, panel) update project counts
+        NotificationCenter.default.post(
+            name: .statusChanged,
+            object: nil,
+            userInfo: ["status": newUI.rawValue, "previous": oldUI.rawValue]
+        )
     }
 
     // MARK: - Watchdog Support
