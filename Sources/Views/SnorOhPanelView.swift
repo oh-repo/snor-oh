@@ -165,11 +165,26 @@ struct SnorOhPanelView: View {
 
     private func sendMessageToPeer(_ peer: PeerInfo, message: String) {
         let sender = sessionManager.nickname
-        let url = "http://\(peer.host):\(peer.port)/peer/message"
-        print("[peer] sending message to \(peer.nickname) at \(url)")
+        let port = peer.port
+        let nickname = peer.nickname
 
         DispatchQueue.global(qos: .userInitiated).async {
-            guard let requestURL = URL(string: url) else { return }
+            // Resolve host to IP if needed
+            let targetIP: String
+            if let ip = peer.ip {
+                targetIP = ip
+            } else {
+                // Resolve via DNS — peer.host might be "Name.local" which needs mDNS
+                targetIP = Self.resolveHostToIP(peer.host) ?? peer.host
+            }
+
+            let url = "http://\(targetIP):\(port)/peer/message"
+            print("[peer] sending message to \(nickname) at \(url)")
+
+            guard let requestURL = URL(string: url) else {
+                print("[peer] invalid URL: \(url)")
+                return
+            }
             var request = URLRequest(url: requestURL)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -178,12 +193,37 @@ struct SnorOhPanelView: View {
             request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
             URLSession.shared.dataTask(with: request) { _, response, error in
                 if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                    print("[peer] message sent to \(peer.nickname)")
+                    print("[peer] message sent to \(nickname)")
                 } else if let error {
                     print("[peer] send failed: \(error.localizedDescription)")
                 }
             }.resume()
         }
+    }
+
+    /// Resolve a hostname to IPv4 via getaddrinfo (handles .local mDNS names).
+    private static func resolveHostToIP(_ host: String) -> String? {
+        var hints = addrinfo()
+        hints.ai_family = AF_INET  // IPv4 only
+        hints.ai_socktype = SOCK_STREAM
+        var result: UnsafeMutablePointer<addrinfo>?
+
+        print("[peer] resolving \(host)...")
+        let status = getaddrinfo(host, nil, &hints, &result)
+        guard status == 0, let info = result else {
+            print("[peer] resolve failed for \(host): \(String(cString: gai_strerror(status)))")
+            return nil
+        }
+        defer { freeaddrinfo(result) }
+
+        var addr = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        if getnameinfo(info.pointee.ai_addr, info.pointee.ai_addrlen,
+                       &addr, socklen_t(addr.count), nil, 0, NI_NUMERICHOST) == 0 {
+            let ip = String(cString: addr)
+            print("[peer] resolved \(host) → \(ip)")
+            return ip
+        }
+        return nil
     }
 
     // MARK: - Speech Bubble
