@@ -53,6 +53,17 @@ enum OhhExporter {
     // MARK: - Export
 
     static func export(ohhID: String, to destination: URL) throws {
+        let jsonData = try exportData(ohhID: ohhID)
+        do {
+            try jsonData.write(to: destination, options: .atomic)
+        } catch {
+            throw ExportError.writeFailed(error)
+        }
+    }
+
+    /// Build the `.snoroh` JSON payload in memory. Used by both file export and
+    /// Share to Marketplace.
+    static func exportData(ohhID: String) throws -> Data {
         let manager = CustomOhhManager.shared
         guard let ohh = manager.ohh(withID: ohhID) else {
             throw ExportError.ohhNotFound
@@ -76,13 +87,11 @@ enum OhhExporter {
         let file = SnorohFile(version: 1, name: ohh.name, sprites: spriteEntries)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let jsonData = try encoder.encode(file)
+        return try encoder.encode(file)
+    }
 
-        do {
-            try jsonData.write(to: destination, options: .atomic)
-        } catch {
-            throw ExportError.writeFailed(error)
-        }
+    static func ohhName(ohhID: String) -> String? {
+        CustomOhhManager.shared.ohh(withID: ohhID)?.name
     }
 
     private static let dateFormatter: ISO8601DateFormatter = {

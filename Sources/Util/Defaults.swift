@@ -18,4 +18,10 @@ enum DefaultsKey {
     static let mascotPositionY = "mascotPositionY"
     static let peerDiscoveryEnabled = "peerDiscoveryEnabled"
     static let devMode = "devMode"
+    static let marketplaceURL = "marketplaceURL"
+    static let creatorName = "creatorName"
+}
+
+enum DefaultsDefault {
+    static let marketplaceURL = "https://snor-oh.vercel.app"
 }

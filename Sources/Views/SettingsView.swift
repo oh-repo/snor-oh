@@ -39,6 +39,8 @@ struct GeneralTab: View {
     @AppStorage(DefaultsKey.hideDock) private var hideDock = false
     @AppStorage(DefaultsKey.trayVisible) private var trayVisible = true
     @AppStorage(DefaultsKey.peerDiscoveryEnabled) private var peerDiscoveryEnabled = true
+    @AppStorage(DefaultsKey.marketplaceURL) private var marketplaceURL = DefaultsDefault.marketplaceURL
+    @AppStorage(DefaultsKey.creatorName) private var creatorName = ""
     @State private var autoStartEnabled = false
     @State private var autoStartError: String?
     @State private var shellHookConfigured = false
@@ -94,6 +96,23 @@ struct GeneralTab: View {
 
                 Toggle("Peer Discovery", isOn: $peerDiscoveryEnabled)
                     .help("Advertise on the local network and discover other snor-oh instances for visiting.")
+            }
+
+            Section("Marketplace") {
+                TextField("URL", text: $marketplaceURL, prompt: Text(DefaultsDefault.marketplaceURL))
+                    .textFieldStyle(.roundedBorder)
+
+                TextField("Creator Name", text: $creatorName, prompt: Text("Anonymous"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: creatorName) { _, newVal in
+                        if newVal.count > 40 {
+                            creatorName = String(newVal.prefix(40))
+                        }
+                    }
+
+                Text("Used when sharing a custom Ohh to the marketplace.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Claude Code Integration") {
@@ -235,9 +254,14 @@ struct OhhTab: View {
     @AppStorage(DefaultsKey.displayScale) private var displayScale = 1.0
     @AppStorage(DefaultsKey.pet) private var selectedPet = "sprite"
 
+    @AppStorage(DefaultsKey.marketplaceURL) private var marketplaceURL = DefaultsDefault.marketplaceURL
+    @AppStorage(DefaultsKey.creatorName) private var creatorName = ""
+
     @State private var editingNickname = ""
     @State private var nicknameChanged = false
     @State private var showSmartImport = false
+    @State private var isSharing = false
+    @State private var sharingName: String = ""
 
     private static let snorohType = UTType(filenameExtension: "snoroh") ?? .data
     private static let animimeType = UTType(filenameExtension: "animime") ?? .data
@@ -317,6 +341,7 @@ struct OhhTab: View {
                         Menu("Manage") {
                             ForEach(CustomOhhManager.shared.ohhs) { ohh in
                                 Menu(ohh.name) {
+                                    Button("Share to Marketplace…") { shareOhh(ohh.id) }
                                     Button("Export") { exportOhh(ohh.id) }
                                     Button("Delete", role: .destructive) { deleteOhh(ohh.id) }
                                 }
@@ -333,6 +358,17 @@ struct OhhTab: View {
         }
         .sheet(isPresented: $showSmartImport) {
             SmartImportSheet()
+        }
+        .sheet(isPresented: $isSharing) {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Sharing \"\(sharingName)\" to marketplace…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(32)
+            .frame(width: 320)
         }
     }
 
@@ -373,6 +409,86 @@ struct OhhTab: View {
             alert.alertStyle = .warning
             alert.runModal()
         }
+    }
+
+    private func shareOhh(_ id: String) {
+        guard let ohh = CustomOhhManager.shared.ohh(withID: id) else { return }
+
+        let baseURL = marketplaceURL.trimmingCharacters(in: .whitespaces).isEmpty
+            ? DefaultsDefault.marketplaceURL
+            : marketplaceURL
+        let creator = creatorName.trimmingCharacters(in: .whitespaces)
+        let creatorArg: String? = creator.isEmpty ? nil : creator
+        let filename = OhhExporter.defaultFilename(for: ohh)
+
+        let data: Data
+        do {
+            data = try OhhExporter.exportData(ohhID: id)
+        } catch {
+            presentShareAlert(
+                title: "Share Failed",
+                message: error.localizedDescription,
+                style: .warning
+            )
+            return
+        }
+
+        sharingName = ohh.name
+        isSharing = true
+
+        Task {
+            do {
+                let result = try await MarketplaceClient.upload(
+                    data: data,
+                    filename: filename,
+                    creator: creatorArg,
+                    baseURL: baseURL
+                )
+                await MainActor.run {
+                    isSharing = false
+                    presentShareSuccess(name: ohh.name, result: result)
+                }
+            } catch {
+                await MainActor.run {
+                    isSharing = false
+                    presentShareAlert(
+                        title: "Share Failed",
+                        message: error.localizedDescription,
+                        style: .warning
+                    )
+                }
+            }
+        }
+    }
+
+    private func presentShareSuccess(name: String, result: MarketplaceClient.UploadResult) {
+        let alert = NSAlert()
+        alert.messageText = "Shared \"\(name)\" to marketplace"
+        var info = "Package ID: \(result.id)"
+        if let remaining = result.remaining {
+            info += "\nDaily uploads remaining: \(remaining)"
+        }
+        alert.informativeText = info
+        alert.alertStyle = .informational
+
+        if result.packageURL != nil {
+            alert.addButton(withTitle: "Copy Link")
+        }
+        alert.addButton(withTitle: "OK")
+
+        let response = alert.runModal()
+        if result.packageURL != nil, response == .alertFirstButtonReturn, let url = result.packageURL {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        }
+    }
+
+    private func presentShareAlert(title: String, message: String, style: NSAlert.Style) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = style
+        alert.runModal()
     }
 
     private func deleteOhh(_ id: String) {
