@@ -124,7 +124,7 @@ struct BucketTab: View {
             Section("Capacity") {
                 HStack {
                     Text("Max items")
-                    Slider(value: maxItemsBinding, in: 50...1000, step: 50)
+                    Slider(value: maxItemsBinding, in: 5...250, step: 5)
                     Text("\(manager.settings.maxItems)")
                         .monospacedDigit()
                         .frame(width: 44, alignment: .trailing)
