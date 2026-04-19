@@ -240,22 +240,15 @@ struct SnorOhPanelView: View {
 
     // MARK: - Content Area (mascot left + project list right)
 
-    /// Fixed square container size for the mascot, based on panel size tier.
-    private var mascotContainerSize: CGFloat {
-        switch size {
-        case .compact: return 72
-        case .regular: return 88
-        case .large:   return 104
-        }
-    }
-
-    /// Inset for glow room — sprite is this much smaller than container on each side.
+    /// Padding around sprite for glow shadow room.
     private var glowInset: CGFloat { glowMode == "off" ? 4 : 10 }
 
-    /// Sprite size: scale-aware, but clamped to fit within container minus glow inset.
-    private var spriteSize: CGFloat {
-        let maxSprite = mascotContainerSize - glowInset * 2
-        return min(mascotSize, maxSprite)
+    /// Sprite size respects user's display scale setting.
+    private var spriteSize: CGFloat { mascotSize }
+
+    /// Container wraps the sprite with glow padding, capped at 40% of panel width.
+    private var mascotContainerSize: CGFloat {
+        min(mascotSize + glowInset * 2, size.panelWidth * 0.4)
     }
 
     private var contentArea: some View {
