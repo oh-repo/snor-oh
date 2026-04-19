@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build snor-oh.app release bundle from Swift Package Manager build output.
+# Build snor-oh.app universal release bundle from Swift Package Manager.
 # Usage: bash Scripts/build-release.sh
 set -euo pipefail
 
@@ -26,22 +26,39 @@ echo "==> Cleaning previous build..."
 rm -rf "$BUILD_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-# --- Build ---
-echo "==> Building release binary..."
-swift build -c release --arch arm64 2>&1 | tail -3
+# --- Build universal binary (arm64 + x86_64) ---
+echo "==> Building arm64..."
+swift build -c release --arch arm64 2>&1 | tail -1
 
-BINARY="$PROJECT_DIR/.build/release/$EXECUTABLE"
-if [ ! -f "$BINARY" ]; then
-    echo "ERROR: Binary not found at $BINARY"
+echo "==> Building x86_64..."
+swift build -c release --arch x86_64 2>&1 | tail -1
+
+ARM_BINARY="$PROJECT_DIR/.build/apple/Products/Release/$EXECUTABLE"
+X86_BINARY="$PROJECT_DIR/.build/apple/Products/Release/$EXECUTABLE"
+
+# SPM puts arch-specific builds in different locations
+ARM_BINARY="$PROJECT_DIR/.build/arm64-apple-macosx/release/$EXECUTABLE"
+X86_BINARY="$PROJECT_DIR/.build/x86_64-apple-macosx/release/$EXECUTABLE"
+
+if [ ! -f "$ARM_BINARY" ]; then
+    echo "ERROR: arm64 binary not found at $ARM_BINARY"
+    exit 1
+fi
+if [ ! -f "$X86_BINARY" ]; then
+    echo "ERROR: x86_64 binary not found at $X86_BINARY"
     exit 1
 fi
 
+echo "==> Creating universal binary with lipo..."
+lipo -create "$ARM_BINARY" "$X86_BINARY" -output "$MACOS_DIR/$EXECUTABLE"
+chmod +x "$MACOS_DIR/$EXECUTABLE"
+
+# Verify
+ARCHS=$(lipo -archs "$MACOS_DIR/$EXECUTABLE")
+echo "    Architectures: $ARCHS"
+
 # --- Assemble .app bundle ---
 echo "==> Assembling $APP_NAME.app..."
-
-# Copy binary — name MUST match CFBundleExecutable in Info.plist
-cp "$BINARY" "$MACOS_DIR/$EXECUTABLE"
-chmod +x "$MACOS_DIR/$EXECUTABLE"
 
 # Copy Info.plist
 cp "$PROJECT_DIR/Info.plist" "$CONTENTS/Info.plist"
@@ -64,12 +81,6 @@ if [ -d "$PROJECT_DIR/Resources/Sounds" ]; then
     cp -R "$PROJECT_DIR/Resources/Sounds" "$RESOURCES_DIR/Sounds"
 fi
 
-# Copy app icon if exists
-if [ -d "$PROJECT_DIR/Resources/Assets.xcassets/AppIcon.appiconset" ]; then
-    # For now, just copy the xcassets — a proper build would compile them with actool
-    echo "    Note: App icon requires actool compilation (skipped in SPM build)"
-fi
-
 # Remove .DS_Store files
 find "$APP_BUNDLE" -name ".DS_Store" -delete 2>/dev/null || true
 
@@ -85,6 +96,7 @@ echo ""
 echo "=== Build Complete ==="
 echo "App:     $APP_BUNDLE"
 echo "Size:    $(du -sh "$APP_BUNDLE" | cut -f1)"
+echo "Archs:   $ARCHS"
 echo ""
 
 # Verify code signature
