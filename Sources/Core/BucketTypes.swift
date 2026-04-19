@@ -174,6 +174,40 @@ struct HotkeyBinding: Codable, Sendable, Hashable {
     }
 }
 
+// MARK: - Defaults
+
+/// Bundle IDs auto-added to `BucketSettings.ignoredBundleIDs` on first run.
+///
+/// Terminals routinely put selected text on the pasteboard (via the app's
+/// "Copy on selection" setting or app-initiated writes), which would fill
+/// the bucket with command-line noise. Password managers put secrets on
+/// the pasteboard on purpose — those must never be captured.
+///
+/// Users can remove entries via Settings → Bucket → Ignored apps if they
+/// specifically want to capture from one of these apps (e.g. explicit ⌘C
+/// from Terminal).
+enum BucketDefaults {
+    static let ignoredBundleIDs: Set<String> = [
+        // Terminals
+        "com.apple.Terminal",
+        "com.googlecode.iterm2",
+        "net.kovidgoyal.kitty",
+        "org.alacritty",
+        "com.github.wez.wezterm",
+        "dev.warp.Warp-Stable",
+        "co.zeit.hyper",
+        "org.tabby",
+
+        // Password managers
+        "com.agilebits.onepassword7",
+        "com.1password.1password",
+        "com.1password.1password8",
+        "com.bitwarden.desktop",
+        "com.lastpass.LastPass",
+        "org.keepassxc.keepassxc",
+    ]
+}
+
 // MARK: - Bucket notification `source` sentinels
 
 /// Values for `.bucketChanged` `userInfo["source"]`. Kept as `String` on the

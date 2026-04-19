@@ -209,10 +209,15 @@ private struct BucketWindowContent: View {
 
 // MARK: - Window drag handle
 
-/// Background NSView whose only job is to answer `mouseDownCanMoveWindow`
-/// with `true`. Overlay it on a SwiftUI view (via `.background`) to make that
-/// region a drag handle for the hosting window — while leaving the rest of
-/// the window inert so child gestures (like `.onDrag` on bucket cards) work.
+/// Background NSView that handles `mouseDown` by calling
+/// `window.performDrag(with:)` — the most reliable way to start a window
+/// drag from a borderless panel, regardless of `isMovableByWindowBackground`.
+///
+/// Place it as `.background()` on the header. The close button sits in
+/// front in the SwiftUI z-order, so AppKit's hit-test routes clicks to the
+/// button first; anywhere else in the header reaches this view and starts
+/// a drag. The rest of the window (list area) doesn't contain this view, so
+/// card `.onDrag` gestures work unimpeded.
 private struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { _DragAreaView() }
     func updateNSView(_ nsView: NSView, context: Context) {}
@@ -220,4 +225,11 @@ private struct WindowDragArea: NSViewRepresentable {
 
 private final class _DragAreaView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // Explicit perform-drag — works even when the window isn't globally
+        // movable-by-background. Safe because the button inside the header
+        // claims its clicks first via SwiftUI's z-order.
+        window?.performDrag(with: event)
+    }
 }

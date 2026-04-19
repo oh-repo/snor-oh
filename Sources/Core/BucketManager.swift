@@ -70,6 +70,22 @@ final class BucketManager {
         } catch {
             NSLog("[bucket] load failed: \(error)")
         }
+        seedDefaultIgnoredBundleIDsIfNeeded()
+    }
+
+    /// One-time migration: seed the ignore list with common terminals and
+    /// password managers so text selection in Terminal / credentials
+    /// copied from 1Password don't get captured out of the box. Guarded by
+    /// `DefaultsKey.bucketIgnoreDefaultsSeeded` so existing users who have
+    /// curated their own list aren't force-updated.
+    private func seedDefaultIgnoredBundleIDsIfNeeded() {
+        let key = DefaultsKey.bucketIgnoreDefaultsSeeded
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+
+        var s = settings
+        s.ignoredBundleIDs.formUnion(BucketDefaults.ignoredBundleIDs)
+        updateSettings(s)
     }
 
     // MARK: - Mutations

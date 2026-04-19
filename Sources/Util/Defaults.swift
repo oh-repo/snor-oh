@@ -41,6 +41,9 @@ enum DefaultsKey {
     static let bucketWindowY = "bucketWindowY"
     static let bucketWindowWidth = "bucketWindowWidth"
     static let bucketWindowHeight = "bucketWindowHeight"
+    /// One-time migration marker: have we seeded default terminal + password
+    /// manager bundle IDs into the ignore list?
+    static let bucketIgnoreDefaultsSeeded = "bucketIgnoreDefaultsSeeded"
 }
 
 enum DefaultsDefault {
