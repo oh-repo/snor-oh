@@ -141,10 +141,18 @@ final class PeerDiscovery {
         var hostname: String?
 
         if case .bonjour(let txtRecord) = result.metadata {
-            if let n = txtRecord["nickname"], !n.isEmpty { nickname = n }
-            if let p = txtRecord["pet"], !p.isEmpty { pet = p }
-            if let portStr = txtRecord["port"], let p = UInt16(portStr) { httpPort = p }
-            if let h = txtRecord["hostname"], !h.isEmpty { hostname = h }
+            // Build dict from TXT record via subscript (returns String?)
+            var txtDict: [String: String] = [:]
+            for entry in txtRecord {
+                if let val = txtRecord[entry.key] {
+                    txtDict[entry.key.lowercased()] = val
+                }
+            }
+            print("[discovery] TXT for \(name): \(txtDict)")
+            if let n = txtDict["nickname"], !n.isEmpty { nickname = n }
+            if let p = txtDict["pet"], !p.isEmpty { pet = p }
+            if let portStr = txtDict["port"], let p = UInt16(portStr) { httpPort = p }
+            if let h = txtDict["hostname"], !h.isEmpty { hostname = h }
         }
 
         // Use advertised hostname (e.g. "MacBook-Pro.local") — mDNS resolves it
