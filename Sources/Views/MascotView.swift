@@ -40,8 +40,13 @@ struct MascotView: View {
 
             // Visitors (if any)
             if !sessionManager.visitors.isEmpty {
-                VisitorView(visitors: sessionManager.visitors)
-                    .frame(height: 60)
+                HStack(spacing: 4) {
+                    ForEach(sessionManager.visitors.prefix(3)) { visitor in
+                        VisitorSprite(pet: visitor.pet)
+                            .frame(width: 40, height: 40)
+                    }
+                }
+                .frame(height: 50)
             }
         }
         .frame(

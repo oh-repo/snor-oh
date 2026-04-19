@@ -120,32 +120,60 @@ struct SnorOhPanelView: View {
     // MARK: - Mascot Stage (transparent, with visitors)
 
     private var mascotStage: some View {
-        ZStack {
-            // Main mascot
-            let sprite = AnimatedSpriteView(engine: spriteEngine)
-                .frame(width: spriteSize, height: spriteSize)
-            if glowRadius > 0 {
-                sprite.shadow(color: glowColor, radius: glowRadius)
-            } else {
-                sprite
-            }
+        VStack(spacing: 4) {
+            ZStack(alignment: .bottom) {
+                // Main mascot
+                let sprite = AnimatedSpriteView(engine: spriteEngine)
+                    .frame(width: spriteSize, height: spriteSize)
+                if glowRadius > 0 {
+                    sprite.shadow(color: glowColor, radius: glowRadius)
+                } else {
+                    sprite
+                }
 
-            // Incoming visitors (small sprites at bottom-right)
-            if !sessionManager.visitors.isEmpty {
-                VStack {
-                    Spacer()
-                    HStack(spacing: 2) {
+                // Incoming visitors — animated sprites next to mascot
+                if !sessionManager.visitors.isEmpty {
+                    HStack(spacing: 4) {
                         Spacer()
                         ForEach(sessionManager.visitors.prefix(3)) { visitor in
-                            VisitorSprite(pet: visitor.pet)
-                                .frame(width: 28, height: 28)
+                            VStack(spacing: 2) {
+                                VisitorSprite(pet: visitor.pet)
+                                    .frame(width: 32, height: 32)
+                                Text(visitor.nickname)
+                                    .font(.system(size: 7, weight: .medium))
+                                    .foregroundStyle(isDark ? .white.opacity(0.5) : .black.opacity(0.4))
+                                    .lineLimit(1)
+                            }
                         }
                     }
+                    .padding(.trailing, 4)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
             }
+
+            // Visiting badge — shown when we're visiting someone
+            if let visitingName = sessionManager.visiting,
+               let peer = sessionManager.peers[visitingName] {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.teal)
+                        .frame(width: 5, height: 5)
+                    Text("visiting \(peer.nickname)")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.teal.opacity(0.8))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(Color.teal.opacity(isDark ? 0.12 : 0.1))
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
         }
+        .animation(.easeInOut(duration: 0.3), value: sessionManager.visitors.count)
+        .animation(.easeInOut(duration: 0.3), value: sessionManager.visiting)
         .frame(maxWidth: .infinity)
-        .frame(height: spriteSize + (glowRadius > 0 ? 20 : 8))
         .padding(.top, 4)
         .contextMenu { mascotContextMenu }
     }
