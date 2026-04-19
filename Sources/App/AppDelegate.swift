@@ -68,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for observer in [mcpSayObserver, taskCompletedObserver, mcpReactObserver, trayObserver].compactMap({ $0 }) {
             NotificationCenter.default.removeObserver(observer)
         }
-        statusBarTimer?.invalidate()
+        if let obs = statusBarObserver { NotificationCenter.default.removeObserver(obs) }
         peerDiscovery?.stop()
         watchdog?.stop()
         httpServer?.stop()
@@ -110,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu Bar
 
-    private var statusBarTimer: Timer?
+    private var statusBarObserver: NSObjectProtocol?
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -124,12 +124,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         updateStatusBarText()
 
-        // Refresh status bar text every 2s
-        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+        // Update status bar text when sessions change
+        statusBarObserver = NotificationCenter.default.addObserver(
+            forName: .statusChanged, object: nil, queue: .main
+        ) { [weak self] _ in
             self?.updateStatusBarText()
         }
-        RunLoop.main.add(timer, forMode: .common)
-        statusBarTimer = timer
     }
 
     private func updateStatusBarText() {
