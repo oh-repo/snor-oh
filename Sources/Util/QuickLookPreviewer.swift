@@ -10,17 +10,20 @@ import Quartz
 ///   2. First-responder handoff for `QLPreviewPanelController` is awkward from
 ///      SwiftUI. We bypass it: set the data source directly and call
 ///      `makeKeyAndOrderFront(_:)`.
-@MainActor
 final class QuickLookPreviewer: NSObject, QLPreviewPanelDataSource {
 
     static let shared = QuickLookPreviewer()
 
+    /// Only touched from the main queue (both the `show(url:)` call site and
+    /// `QLPreviewPanel` callbacks run on main). Marked nonisolated so the
+    /// protocol conformance doesn't trip Swift 6 isolation checks.
     private var url: URL?
 
     private override init() {
         super.init()
     }
 
+    @MainActor
     func show(url: URL) {
         self.url = url
         guard let panel = QLPreviewPanel.shared() else { return }
@@ -30,6 +33,7 @@ final class QuickLookPreviewer: NSObject, QLPreviewPanelDataSource {
     }
 
     // MARK: - QLPreviewPanelDataSource
+    // QLPreviewPanel dispatches to its data source on the main queue.
 
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
         url != nil ? 1 : 0
