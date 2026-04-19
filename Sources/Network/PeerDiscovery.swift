@@ -6,12 +6,6 @@ import Network
 ///
 /// Service type: `_snor-oh._tcp`
 /// TXT records: `nickname`, `pet`, `port` (HTTP port for visits)
-///
-/// NWListener uses an ephemeral port (not the HTTP port) to avoid conflicts
-/// with the SwiftNIO HTTP server. The actual HTTP port is advertised in the
-/// TXT record so peers know where to send /visit requests.
-///
-/// Main-thread only for state mutations (peers dict).
 final class PeerDiscovery {
     private let sessionManager: SessionManager
     private var listener: NWListener?
@@ -21,12 +15,15 @@ final class PeerDiscovery {
     /// Our advertised instance name, used to filter self-discovery.
     private(set) var instanceName: String = ""
 
+    /// The PID-based suffix ensures uniqueness even if nicknames collide.
+    private let pidSuffix = "-\(ProcessInfo.processInfo.processIdentifier)"
+
     init(sessionManager: SessionManager) {
         self.sessionManager = sessionManager
     }
 
     func start() {
-        instanceName = "\(sessionManager.nickname)-\(ProcessInfo.processInfo.processIdentifier)"
+        instanceName = sessionManager.nickname + pidSuffix
         startAdvertising()
         startBrowsing()
     }
@@ -38,9 +35,8 @@ final class PeerDiscovery {
         browser = nil
     }
 
-    /// Update TXT records when nickname/pet changes.
     func updateTXT() {
-        instanceName = "\(sessionManager.nickname)-\(ProcessInfo.processInfo.processIdentifier)"
+        instanceName = sessionManager.nickname + pidSuffix
         stop()
         start()
     }
@@ -49,14 +45,12 @@ final class PeerDiscovery {
 
     private func startAdvertising() {
         do {
-            // Ephemeral port — avoids conflict with SwiftNIO HTTP server on :1234
             listener = try NWListener(using: .tcp)
         } catch {
             print("[discovery] failed to create listener: \(error)")
             return
         }
 
-        // Advertise with TXT records including the HTTP port for visits
         var txtRecord = NWTXTRecord()
         txtRecord["nickname"] = sessionManager.nickname
         txtRecord["pet"] = sessionManager.pet
@@ -70,15 +64,18 @@ final class PeerDiscovery {
         listener?.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
-                print("[discovery] advertising as \(self?.instanceName ?? "?")")
+                if let port = self?.listener?.port?.rawValue {
+                    print("[discovery] advertising as \(self?.instanceName ?? "?") on port \(port)")
+                }
             case .failed(let error):
                 print("[discovery] listener failed: \(error)")
+            case .waiting(let error):
+                print("[discovery] listener waiting: \(error)")
             default:
                 break
             }
         }
 
-        // We don't accept connections — HTTP server handles traffic
         listener?.newConnectionHandler = { connection in
             connection.cancel()
         }
@@ -89,7 +86,7 @@ final class PeerDiscovery {
     // MARK: - Browsing
 
     private func startBrowsing() {
-        let descriptor = NWBrowser.Descriptor.bonjour(type: "_snor-oh._tcp", domain: "local.")
+        let descriptor = NWBrowser.Descriptor.bonjour(type: "_snor-oh._tcp", domain: nil)
         browser = NWBrowser(for: descriptor, using: .tcp)
 
         browser?.browseResultsChangedHandler = { [weak self] results, changes in
@@ -102,6 +99,8 @@ final class PeerDiscovery {
                 print("[discovery] browsing for peers")
             case .failed(let error):
                 print("[discovery] browser failed: \(error)")
+            case .waiting(let error):
+                print("[discovery] browser waiting (local network permission needed?): \(error)")
             default:
                 break
             }
@@ -130,24 +129,29 @@ final class PeerDiscovery {
     private func handlePeerFound(_ result: NWBrowser.Result) {
         guard case .service(let name, _, _, _) = result.endpoint else { return }
 
-        // Skip self
-        guard name != instanceName else { return }
-
-        // Extract TXT record
-        var nickname = "Unknown"
-        var pet = "sprite"
-        var httpPort: UInt16 = 1234
-        if case .bonjour(let txtRecord) = result.metadata {
-            nickname = txtRecord["nickname"] ?? "Unknown"
-            pet = txtRecord["pet"] ?? "sprite"
-            if let portStr = txtRecord["port"], let p = UInt16(portStr) {
-                httpPort = p
-            }
+        // Skip self — check both exact name and PID suffix
+        if name == instanceName || name.hasSuffix(pidSuffix) {
+            return
         }
 
-        // Resolve endpoint to get IP address (with 5s timeout to prevent leaked connections)
+        // Extract TXT record
+        var nickname = name  // fallback: use service name
+        var pet = "sprite"
+        var httpPort: UInt16 = 1234
+
+        if case .bonjour(let txtRecord) = result.metadata {
+            // NWTXTRecord key lookup
+            if let n = txtRecord["nickname"], !n.isEmpty { nickname = n }
+            if let p = txtRecord["pet"], !p.isEmpty { pet = p }
+            if let portStr = txtRecord["port"], let p = UInt16(portStr) { httpPort = p }
+        }
+
+        print("[discovery] found peer: \(name) nickname=\(nickname) pet=\(pet) port=\(httpPort)")
+
+        // Resolve IP by connecting to the service endpoint
         let connection = NWConnection(to: result.endpoint, using: .tcp)
         var resolved = false
+
         connection.stateUpdateHandler = { [weak self, name, nickname, pet, httpPort] state in
             guard let self else {
                 connection.cancel()
@@ -155,42 +159,53 @@ final class PeerDiscovery {
             }
             switch state {
             case .ready:
+                guard !resolved else { break }
                 resolved = true
+
+                var ip = "127.0.0.1"
                 if let path = connection.currentPath,
                    let endpoint = path.remoteEndpoint,
                    case .hostPort(let host, _) = endpoint {
-                    let ip: String
                     switch host {
-                    case .ipv4(let addr):
-                        ip = "\(addr)"
-                    case .ipv6(let addr):
-                        ip = "[\(addr)]"
-                    default:
-                        ip = "127.0.0.1"
-                    }
-                    let peer = PeerInfo(
-                        instanceName: name,
-                        nickname: nickname,
-                        pet: pet,
-                        ip: ip,
-                        port: httpPort  // Use TXT record port, not the NWListener port
-                    )
-                    DispatchQueue.main.async {
-                        self.sessionManager.addPeer(peer)
+                    case .ipv4(let addr): ip = "\(addr)"
+                    case .ipv6(let addr): ip = "[\(addr)]"
+                    default: break
                     }
                 }
+
+                let peer = PeerInfo(
+                    instanceName: name,
+                    nickname: nickname,
+                    pet: pet,
+                    ip: ip,
+                    port: httpPort
+                )
+                print("[discovery] resolved peer \(nickname) at \(ip):\(httpPort)")
+                DispatchQueue.main.async {
+                    self.sessionManager.addPeer(peer)
+                }
                 connection.cancel()
-            case .failed, .cancelled:
+
+            case .failed(let error):
+                guard !resolved else { break }
                 resolved = true
+                print("[discovery] failed to resolve \(name): \(error)")
                 connection.cancel()
+
+            case .cancelled:
+                break
+
             default:
                 break
             }
         }
         connection.start(queue: queue)
-        // Cancel the connection after 5s if it hasn't resolved
+
+        // Timeout: cancel if not resolved within 5s
         queue.asyncAfter(deadline: .now() + 5) {
             if !resolved {
+                resolved = true
+                print("[discovery] timeout resolving \(name)")
                 connection.cancel()
             }
         }
@@ -198,6 +213,7 @@ final class PeerDiscovery {
 
     private func handlePeerRemoved(_ result: NWBrowser.Result) {
         guard case .service(let name, _, _, _) = result.endpoint else { return }
+        print("[discovery] peer removed: \(name)")
         DispatchQueue.main.async { [weak self] in
             self?.sessionManager.removePeer(instanceName: name)
         }
