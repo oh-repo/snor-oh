@@ -30,3 +30,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Tooling scratch
+.next/
+.worktrees/
