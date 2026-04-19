@@ -8,8 +8,14 @@ let _download: Ratelimit | null = null;
 
 function redis(): Redis {
   if (_redis) return _redis;
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const url =
+    process.env.UPSTASH_REDIS_REST_URL ??
+    process.env.KV_REST_API_URL ??
+    process.env.STORAGE_REST_URL;
+  const token =
+    process.env.UPSTASH_REDIS_REST_TOKEN ??
+    process.env.KV_REST_API_TOKEN ??
+    process.env.STORAGE_REST_TOKEN;
   if (!url || !token) throw new Error("Upstash env vars missing");
   _redis = new Redis({ url, token });
   return _redis;
