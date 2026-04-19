@@ -103,7 +103,14 @@ final class PeerDiscovery {
             }
         }
 
-        listener?.newConnectionHandler = { $0.cancel() }
+        // Accept connections briefly so peer resolvers can reach .ready,
+        // then cancel after a short delay
+        listener?.newConnectionHandler = { connection in
+            connection.start(queue: DispatchQueue.global(qos: .utility))
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) {
+                connection.cancel()
+            }
+        }
         listener?.start(queue: queue)
     }
 
@@ -197,7 +204,8 @@ final class PeerDiscovery {
                        let remote = path.remoteEndpoint,
                        case .hostPort(let host, _) = remote {
                         switch host {
-                        case .ipv4(let addr): ip = "\(addr)"
+                        case .ipv4(let addr):
+                            ip = "\(addr)".components(separatedBy: "%").first
                         case .ipv6(let addr):
                             ip = "\(addr)".components(separatedBy: "%").first
                         default: break
