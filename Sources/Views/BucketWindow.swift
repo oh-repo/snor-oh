@@ -36,7 +36,10 @@ final class BucketWindow: NSPanel {
         hasShadow = true
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        isMovableByWindowBackground = true
+        // Only the header acts as a drag handle — see WindowDragArea below.
+        // Dragging on a card must NOT move the window, otherwise SwiftUI's
+        // `.onDrag` never wins and items can't leave the bucket.
+        isMovableByWindowBackground = false
         hidesOnDeactivate = false
 
         // Min resize — keep the search field + a couple cards legible.
@@ -197,5 +200,24 @@ private struct BucketWindowContent: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        // Drag-to-move enabled ONLY in the header strip. Subviews like the
+        // close button still receive clicks normally because AppKit only
+        // promotes the drag when no responder chain child consumed the event.
+        .background(WindowDragArea())
     }
+}
+
+// MARK: - Window drag handle
+
+/// Background NSView whose only job is to answer `mouseDownCanMoveWindow`
+/// with `true`. Overlay it on a SwiftUI view (via `.background`) to make that
+/// region a drag handle for the hosting window — while leaving the rest of
+/// the window inert so child gestures (like `.onDrag` on bucket cards) work.
+private struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { _DragAreaView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private final class _DragAreaView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
 }
