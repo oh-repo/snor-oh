@@ -374,6 +374,7 @@ struct OhhTab: View {
 
     @AppStorage(DefaultsKey.nickname) private var nickname = "Buddy"
     @AppStorage(DefaultsKey.displayScale) private var displayScale = 1.0
+    @AppStorage(DefaultsKey.mascotVisible) private var mascotVisible = true
     @AppStorage(DefaultsKey.pet) private var selectedPet = "sprite"
 
     @AppStorage(DefaultsKey.marketplaceURL) private var marketplaceURL = DefaultsDefault.marketplaceURL
@@ -418,6 +419,10 @@ struct OhhTab: View {
                     Text("XL (2x)").tag(2.0)
                 }
                 .pickerStyle(.segmented)
+                .disabled(!mascotVisible)
+
+                Toggle("Show Mascot", isOn: $mascotVisible)
+                    .help("Hide the mascot to show a minimal session-only panel. Bucket drop and peer messages from the mascot become unavailable when hidden.")
             }
 
             Section("Pet") {

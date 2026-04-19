@@ -6,6 +6,7 @@ enum DefaultsKey {
     static let pet = "pet"
     static let nickname = "nickname"
     static let displayScale = "displayScale"
+    static let mascotVisible = "mascotVisible"
     static let glowMode = "glowMode"
     static let bubbleEnabled = "bubbleEnabled"
     static let hideDock = "hideDock"

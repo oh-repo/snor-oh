@@ -71,6 +71,7 @@ struct SnorOhPanelView: View {
     @AppStorage(DefaultsKey.sidebarCollapsed) private var collapsed = false
     @AppStorage(DefaultsKey.theme) private var theme = "dark"
     @AppStorage(DefaultsKey.displayScale) private var displayScale = 1.0
+    @AppStorage(DefaultsKey.mascotVisible) private var mascotVisible = true
     @AppStorage(DefaultsKey.glowMode) private var glowMode = "off"
     @Environment(\.colorScheme) private var colorScheme
 
@@ -104,7 +105,9 @@ struct SnorOhPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            mascotStage
+            if mascotVisible {
+                mascotStage
+            }
 
             if bubbleManager.isVisible {
                 speechBubble
