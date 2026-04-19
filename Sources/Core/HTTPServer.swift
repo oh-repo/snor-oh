@@ -98,6 +98,8 @@ private final class HTTPHandler: ChannelInboundHandler {
             (status, responseBody) = handleMCPSay(body: body)
         case "/mcp/react":
             (status, responseBody) = handleMCPReact(body: body)
+        case "/peer/message":
+            (status, responseBody) = handlePeerMessage(body: body)
         default:
             (status, responseBody) = (.notFound, "not found")
         }
@@ -158,6 +160,18 @@ private final class HTTPHandler: ChannelInboundHandler {
         }
         DispatchQueue.main.async {
             self.sessionManager.removeVisitor(instanceName: payload.instanceName, nickname: payload.nickname)
+        }
+        return (.ok, "ok")
+    }
+
+    private func handlePeerMessage(body: ByteBuffer) -> (HTTPResponseStatus, String) {
+        guard let data = body.getBytes(at: body.readerIndex, length: body.readableBytes).flatMap({ Data($0) }),
+              let payload = try? JSONDecoder().decode(PeerMessagePayload.self, from: data) else {
+            return (.badRequest, "invalid json")
+        }
+        let bubbleMessage = "\(payload.sender): \(payload.message)"
+        DispatchQueue.main.async {
+            self.sessionManager.handleMCPSay(message: bubbleMessage, durationMs: 8000)
         }
         return (.ok, "ok")
     }

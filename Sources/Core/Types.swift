@@ -121,6 +121,11 @@ struct MCPReactPayload: Codable {
     }
 }
 
+struct PeerMessagePayload: Codable {
+    let sender: String
+    let message: String
+}
+
 struct VisitPayload: Codable {
     let instanceName: String
     let pet: String

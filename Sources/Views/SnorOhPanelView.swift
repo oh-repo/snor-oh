@@ -62,6 +62,8 @@ struct SnorOhPanelView: View {
     let spriteEngine: SpriteEngine
     let bubbleManager: BubbleManager
     let visitManager: VisitManager?
+    @State private var messagePeer: PeerInfo?
+    @State private var messageText = ""
 
     @AppStorage(DefaultsKey.panelSize) private var sizeRaw = "regular"
     @AppStorage(DefaultsKey.sidebarCollapsed) private var collapsed = false
@@ -117,100 +119,70 @@ struct SnorOhPanelView: View {
         .onChange(of: sessionManager.pet) { _, p in spriteEngine.setPet(p) }
     }
 
-    // MARK: - Mascot Stage (transparent, with visitors)
+    // MARK: - Mascot Stage
 
     private var mascotStage: some View {
-        VStack(spacing: 4) {
-            // Main mascot
-            ZStack {
-                let sprite = AnimatedSpriteView(engine: spriteEngine)
-                    .frame(width: spriteSize, height: spriteSize)
-                if glowRadius > 0 {
-                    sprite.shadow(color: glowColor, radius: glowRadius)
-                } else {
-                    sprite
-                }
-            }
-
-            // Incoming visitors — row below mascot
-            if !sessionManager.visitors.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(sessionManager.visitors.prefix(3)) { visitor in
-                        VStack(spacing: 2) {
-                            VisitorSprite(pet: visitor.pet)
-                                .frame(width: 36, height: 36)
-                            Text(visitor.nickname)
-                                .font(.system(size: 8, weight: .medium))
-                                .foregroundStyle(isDark ? .white.opacity(0.6) : .black.opacity(0.5))
-                                .lineLimit(1)
-                        }
-                    }
-                }
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-
-            // Visiting badge — shown when we're visiting someone
-            if let visitingName = sessionManager.visiting,
-               let peer = sessionManager.peers[visitingName] {
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(Color.teal)
-                        .frame(width: 5, height: 5)
-                    Text("visiting \(peer.nickname)")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.teal.opacity(0.8))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(Color.teal.opacity(isDark ? 0.12 : 0.1))
-                )
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        ZStack {
+            let sprite = AnimatedSpriteView(engine: spriteEngine)
+                .frame(width: spriteSize, height: spriteSize)
+            if glowRadius > 0 {
+                sprite.shadow(color: glowColor, radius: glowRadius)
+            } else {
+                sprite
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: sessionManager.visitors.count)
-        .animation(.easeInOut(duration: 0.3), value: sessionManager.visiting)
         .frame(maxWidth: .infinity)
+        .frame(height: spriteSize + (glowRadius > 0 ? 20 : 8))
         .padding(.top, 4)
         .contextMenu { mascotContextMenu }
+        .sheet(item: $messagePeer) { peer in
+            SendMessageSheet(
+                peerNickname: peer.nickname,
+                onSend: { message in
+                    sendMessageToPeer(peer, message: message)
+                }
+            )
+        }
     }
 
     @ViewBuilder
     private var mascotContextMenu: some View {
         let peers = Array(sessionManager.peers.values)
-        let isVisiting = sessionManager.visiting != nil
 
         if !peers.isEmpty {
-            Section("Nearby Peers") {
+            Section("Send Message") {
                 ForEach(peers, id: \.instanceName) { peer in
-                    let visiting = sessionManager.visiting == peer.instanceName
-                    Button {
-                        if visiting {
-                            visitManager?.cancelVisit()
-                        } else if !isVisiting {
-                            _ = visitManager?.visit(peerInstanceName: peer.instanceName)
-                        }
-                    } label: {
-                        HStack {
-                            Text(peer.nickname)
-                            if visiting {
-                                Text("(visiting)")
-                            }
-                        }
+                    Button(peer.nickname) {
+                        messagePeer = peer
                     }
-                    .disabled(isVisiting && !visiting)
-                }
-            }
-
-            if isVisiting {
-                Button("End Visit") {
-                    visitManager?.cancelVisit()
                 }
             }
         } else {
             Text("No peers nearby")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private func sendMessageToPeer(_ peer: PeerInfo, message: String) {
+        let sender = sessionManager.nickname
+        let url = "http://\(peer.host):\(peer.port)/peer/message"
+        print("[peer] sending message to \(peer.nickname) at \(url)")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let requestURL = URL(string: url) else { return }
+            var request = URLRequest(url: requestURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 5
+            let payload = ["sender": sender, "message": message]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+            URLSession.shared.dataTask(with: request) { _, response, error in
+                if let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                    print("[peer] message sent to \(peer.nickname)")
+                } else if let error {
+                    print("[peer] send failed: \(error.localizedDescription)")
+                }
+            }.resume()
         }
     }
 
@@ -427,6 +399,44 @@ struct SnorOhPanelView: View {
         let script = "tell application \"Terminal\" to do script \"cd \\\"\(escaped)\\\"\""
         var error: NSDictionary?
         NSAppleScript(source: script)?.executeAndReturnError(&error)
+    }
+}
+
+// MARK: - Send Message Sheet
+
+private struct SendMessageSheet: View {
+    let peerNickname: String
+    let onSend: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var message = ""
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Message \(peerNickname)")
+                .font(.headline)
+
+            TextField("Type a message...", text: $message)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { send() }
+
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Send") { send() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 280)
+    }
+
+    private func send() {
+        let trimmed = message.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        onSend(trimmed)
+        dismiss()
     }
 }
 
