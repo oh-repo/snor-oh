@@ -50,7 +50,7 @@ final class SessionManager {
 
     // MARK: Constants
 
-    static let heartbeatTimeoutSecs: UInt64 = 40
+    static let heartbeatTimeoutSecs: UInt64 = 60
     static let serviceDisplaySecs: UInt64 = 2
     static let idleToSleepSecs: UInt64 = 120
     // MARK: - Status Handling
@@ -131,6 +131,8 @@ final class SessionManager {
         return winner
     }
 
+    private var lastProjectCount: Int = 0
+
     func emitIfChanged() {
         let newUI = resolveUIState()
 
@@ -143,8 +145,10 @@ final class SessionManager {
         }
 
         let oldUI = currentUI
+        var changed = false
         if newUI != currentUI {
             currentUI = newUI
+            changed = true
 
             if newUI == .idle {
                 idleSince = Date()
@@ -153,12 +157,20 @@ final class SessionManager {
             }
         }
 
-        // Always post so observers (status bar, panel) update project counts
-        NotificationCenter.default.post(
-            name: .statusChanged,
-            object: nil,
-            userInfo: ["status": newUI.rawValue, "previous": oldUI.rawValue]
-        )
+        // Also detect project count changes (new session added/removed)
+        let projectCount = projects.count
+        if projectCount != lastProjectCount {
+            lastProjectCount = projectCount
+            changed = true
+        }
+
+        if changed {
+            NotificationCenter.default.post(
+                name: .statusChanged,
+                object: nil,
+                userInfo: ["status": newUI.rawValue, "previous": oldUI.rawValue]
+            )
+        }
     }
 
     // MARK: - Watchdog Support

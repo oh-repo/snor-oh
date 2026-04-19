@@ -26,5 +26,11 @@
     <string></string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>snor-oh uses the local network to discover and visit other snor-oh instances nearby.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_snor-oh._tcp</string>
+    </array>
 </dict>
 </plist>
