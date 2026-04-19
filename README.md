@@ -1,262 +1,88 @@
 # snor-oh
 
-A native macOS desktop mascot that reacts to your terminal and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) activity in real-time. Built with SwiftUI + SwiftNIO.
+A native macOS desktop mascot that reacts to your terminal and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) activity. Built with SwiftUI + SwiftNIO.
 
-A pixel dog floats on your screen, watching what you do: running commands turns it busy, finishing tasks makes it celebrate, and idle time puts it to sleep. It discovers nearby peers on your local network and can visit them.
-
-<p align="center">
-  <img src="Resources/Sprites/RottweilerIdle.png" width="128" alt="Rottweiler idle sprite">
-</p>
+Your mascot floats on screen — running commands makes it busy, finishing tasks triggers a celebration, and idle time puts it to sleep. When the panel is hidden, status shows in the menu bar with bubble notifications.
 
 ## Requirements
 
 - macOS 14.0 (Sonoma) or later
-- [Node.js](https://nodejs.org/) (for MCP server, used by Claude Code integration)
-- Swift 5.9+ (only for building from source)
+- [Node.js](https://nodejs.org/) for Claude Code MCP integration
+- Swift 5.9+ (building from source only)
 
-## Installation
+## Install
 
-### From DMG
+### From Release
 
-1. Download `snor-oh-0.1.0.dmg` from the [Releases](https://github.com/thanh-dong/snor-oh/releases) page
-2. Open the DMG and drag **snor-oh** to Applications
-3. Launch snor-oh from Applications
-4. On first launch, the setup wizard will configure everything automatically
+Download `snor-oh-0.1.0.dmg` from [Releases](https://github.com/thanh-dong/snor-oh/releases), drag to Applications, launch. The setup wizard configures everything on first run.
 
 ### From Source
 
 ```bash
 git clone https://github.com/thanh-dong/snor-oh.git
 cd snor-oh
-
-# Development
-swift build
-swift run
-
-# Release build (.app bundle)
-bash Scripts/build-release.sh
-# Output: .build/release-app/snor-oh.app
-
-# Create DMG
-hdiutil create -volname "snor-oh" \
-  -srcfolder .build/release-app/snor-oh.app \
-  -ov -format UDZO .build/release-app/snor-oh-0.1.0.dmg
+swift build && swift run          # dev
+bash Scripts/build-release.sh     # release → .build/release-app/snor-oh.app
 ```
 
-## First Launch Setup
+## Shell Integration
 
-When you launch snor-oh for the first time, the setup wizard runs automatically:
-
-1. **MCP Server** - Installs the Claude Code MCP server to `~/.snor-oh/mcp/`
-2. **Claude Code Hooks** - Configures hooks in `~/.claude/settings.json` so Claude Code activity triggers mascot animations
-3. **Setup Marker** - Writes `~/.snor-oh/setup-done` to skip the wizard on subsequent launches
-
-On later launches, the MCP server is silently updated and hooks are migrated if needed.
-
-## Shell Integration (Terminal Monitoring)
-
-To make the mascot react to your terminal commands, source the appropriate hook script in your shell config:
-
-### Zsh (`~/.zshrc`)
+Source the hook script in your shell config to make the mascot react to terminal commands:
 
 ```bash
+# Zsh (~/.zshrc)
 source /Applications/snor-oh.app/Contents/Resources/Scripts/terminal-mirror.zsh
-```
 
-### Bash (`~/.bashrc`)
-
-```bash
+# Bash (~/.bashrc)
 source /Applications/snor-oh.app/Contents/Resources/Scripts/terminal-mirror.bash
-```
 
-### Fish (`~/.config/fish/config.fish`)
-
-```fish
+# Fish (~/.config/fish/config.fish)
 source /Applications/snor-oh.app/Contents/Resources/Scripts/terminal-mirror.fish
 ```
 
-> If you built from source, replace `/Applications/snor-oh.app` with the path to your built `.app` bundle.
-
-### What the Shell Hooks Do
-
-- **Command starts** (`preexec`) - Sends `state=busy` to the mascot. Long-running dev servers (`start`, `dev`, `serve`, `watch`) are classified as `service` (brief blue flash).
-- **Command ends** (`precmd`) - Sends `state=idle`, mascot returns to idle animation.
-- **Heartbeat** - Background `curl` every 20 seconds keeps the session alive. Sessions without a heartbeat for 40 seconds are removed.
-- **Multi-session** - Each terminal gets its own session (tracked by PID). The panel shows per-project status.
-
 ## Claude Code Integration
 
-snor-oh integrates with Claude Code via two mechanisms:
+**MCP Server** — Claude Code talks to the mascot via 3 tools: `pet_say` (speech bubble), `pet_react` (animation), `pet_status` (status query). Install/manage from Settings > General.
 
-### MCP Server (Bidirectional)
+**Hooks** — Claude Code activity (tool use, prompts, session start/end) triggers mascot status changes automatically.
 
-Claude Code can talk to your mascot through the MCP server:
+## Features
 
-| Tool | Description |
-|------|-------------|
-| `pet_say` | Show a speech bubble with a message |
-| `pet_react` | Trigger a reaction animation (celebrate, excited, nervous, confused, sleep) |
-| `pet_status` | Get current mascot status, session info, and usage stats |
+**Panel** — Tamagotchi-style layout: mascot hero on top, collapsible session list below with status summary and per-project status rails.
 
-The MCP server is registered in `~/.claude.json` under `mcpServers.snor-oh`.
+**Menu Bar** — Status icon shows colored dots with session counts. Speech bubbles pop from the icon when the panel is hidden.
 
-### Hooks (Claude Code -> Mascot)
+**Settings** — General (theme, glow, size, MCP install/uninstall), Ohh (pet selection, display scale, Smart Import, .snoroh export/import), Claude Code (plugin/skill/command/MCP/hook manager), About.
 
-Claude Code hooks in `~/.claude/settings.json` notify the mascot on:
+**Smart Import** — Upload any sprite sheet PNG, auto-detect frames (background removal, row/column detection), assign frame ranges per status, preview animations.
 
-| Event | Action |
-|-------|--------|
-| `PreToolUse` | Mascot goes busy |
-| `UserPromptSubmit` | Mascot goes busy |
-| `Stop` | Mascot returns to idle |
-| `SessionStart` | Mascot returns to idle |
-| `SessionEnd` | Mascot returns to idle |
+**Custom Pets** — Create unlimited custom pets via Smart Import or .snoroh file import. Stored at `~/.snor-oh/custom-ohhs.json` + `~/.snor-oh/custom-sprites/`.
 
-## Usage
+**Peer Discovery** — Finds other snor-oh instances on LAN via Bonjour. Visit peers — your mascot appears on their screen.
 
-### Tray Icon
+**Multi-Session** — Each terminal tracked by PID + working directory. Grouped into projects. Status priority: busy > service > idle > disconnected.
 
-- **Left-click** - Toggle mascot visibility
-- **Right-click** - Context menu (Show, Settings, Quit)
+## Built-in Pets
 
-### Settings (Cmd+,)
-
-| Tab | Options |
-|-----|---------|
-| **General** | Theme (dark/light/system), glow effect, speech bubbles, card size (compact/regular/large), auto-start at login, hide dock icon, tray icon visibility |
-| **Mime** | Nickname, display scale (0.5x-2x), pet selection (4 built-in + custom), import/export `.snoroh` files, manage custom pets |
-| **Claude Code** | Plugin manager (enable/disable, view bundled skills), MCP servers (global + per-project), slash commands (with content preview), standalone skills, hooks (grouped by event, own-hook protection) |
-| **About** | Version info, GitHub link, dev mode (10-click secret) |
-
-### Built-in Pets
-
-| Pet | Frame Size |
-|-----|-----------|
-| Rottweiler | 64px |
-| Dalmatian | 64px |
-| Samurai | 128px |
-| Hancock | 128px |
-
-### Custom Pets
-
-Create custom pets from any sprite sheet PNG:
-
-1. Open Settings > Mime tab
-2. Click the **+** card in the pet grid
-3. Load a sprite sheet image
-4. The Smart Import pipeline auto-detects frames:
-   - Detects background color from 4 corners
-   - Removes background (sets to transparent)
-   - Scans for rows (horizontal transparent gaps)
-   - Scans for columns within each row (3-pass: detect, bridge gaps, absorb slivers)
-5. Assign frame ranges to each status (idle, busy, service, etc.)
-6. All frames are normalized to 128x128px grid strips
-
-Custom pets are stored at:
-- Metadata: `~/.snor-oh/custom-mimes.json`
-- Sprites: `~/.snor-oh/custom-sprites/`
-
-Export/import custom pets as `.snoroh` files (JSON with base64-encoded PNGs).
-
-## Multi-Session & Projects
-
-When multiple terminals are open, the panel shows a per-project view:
-
-- Each terminal session is tracked by PID + working directory
-- Sessions in the same `cwd` are grouped into a project
-- Project status = highest priority session: **busy > service > idle**
-- Git status (modified file count) is polled every 30 seconds per project
-
-### Status Priority
-
-| Status | Priority | Color | Meaning |
-|--------|----------|-------|---------|
-| Busy | 4 | Red | Command running |
-| Service | 3 | Blue | Dev server (auto-reverts to idle after 2s) |
-| Idle | 2 | Green | Waiting for input |
-| Disconnected | 0 | Gray | No active sessions |
-| Sleeping | - | Gray | Idle for 2+ minutes |
-
-## Peer Discovery (LAN)
-
-snor-oh discovers other instances on your local network via Bonjour:
-
-- Service type: `_snor-oh._tcp`
-- TXT records: `nickname`, `pet`, `port`
-- Peers appear in the panel with their pet sprite and nickname
-- Click a peer to "visit" them (your pet appears on their screen for 15 seconds)
-
-## HTTP API
-
-Local HTTP server on `127.0.0.1:1234`:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/status?pid=X&state=busy\|idle&type=task\|service&cwd=PATH` | GET | Update session status |
-| `/heartbeat?pid=X&cwd=PATH` | GET | Keep session alive |
-| `/visit` | POST | Send a visit (JSON body) |
-| `/visit-end` | POST | End a visit (JSON body) |
-| `/mcp/say` | POST | Speech bubble `{"message":"...", "duration_secs":7}` |
-| `/mcp/react` | POST | Reaction `{"reaction":"celebrate", "duration_secs":3}` |
-| `/mcp/pet-status` | GET | Full status JSON |
-| `/debug` | GET | Plain text state dump |
-
-## File Structure
-
-```
-~/.snor-oh/
-  setup-done                    # First-launch marker
-  mcp/server.mjs               # MCP server (updated on each launch)
-  custom-mimes.json             # Custom pet metadata
-  custom-sprites/               # Custom pet PNG sprite strips
-    custom-<UUID>-idle.png
-    custom-<UUID>-busy.png
-    ...
-```
+| Pet | Source |
+|-----|--------|
+| Sprite | PMD-style, 12 animations (default) |
+| Samurai | 128px sprite strips |
+| Hancock | 128px sprite strips |
 
 ## Development
 
 ```bash
-# Build & run
-swift build && swift run
-
-# Run tests (19 SessionManager tests)
-swift test
-
-# Generate Xcode project (requires xcodegen)
-xcodegen generate
-open SnorOhSwift.xcodeproj
-
-# Type check
-swift build 2>&1 | head -5
+swift build && swift run    # build & run
+swift test                  # 19 unit tests
+bash Scripts/build-release.sh  # release .app
 ```
 
-### Architecture
+## Inspired By
 
-```
-Shell hooks (curl) --> HTTP :1234 --> SessionManager --> SwiftUI Views
-Claude Code <--stdio--> MCP server (Node.js) <--HTTP--> :1234 --> SwiftUI Views
-Bonjour (NWBrowser/NWListener) --> PeerDiscovery --> SessionManager --> PanelView
-```
+- **[ani-mime](https://github.com/vietnguyenhoangw/ani-mime)** by [@vietnguyenhoangw](https://github.com/vietnguyenhoangw) — The original Claude Code desktop mascot. ani-mime's architecture, sprite system, MCP integration, and peer discovery were the foundation snor-oh was built upon.
 
-| Module | Files | Responsibility |
-|--------|-------|---------------|
-| Core | Types, SessionManager, Watchdog, HTTPServer, ClaudeCodeConfig | State management, HTTP API, Claude Code config I/O |
-| App | SnorOhApp, AppDelegate | Lifecycle, menu bar, window management |
-| Animation | SpriteConfig, SpriteCache, SpriteEngine | Sprite sheets, frame extraction, animation |
-| Sprites | CustomMimeManager, SmartImport, MimeExporter | Custom pet CRUD, sprite sheet processing |
-| Views | SnorOhPanelWindow/View, MascotView, StatusPill, SpeechBubble, Settings, ClaudeCodeSettings, Setup | UI layer |
-| Network | GitStatus, PeerDiscovery, VisitManager | Git polling, Bonjour, peer visits |
-| Setup | MCPInstaller, ClaudeHooks | First-launch configuration |
-| Util | Logger, Defaults, SpriteAssignment | Logging, UserDefaults keys, per-project pet assignment |
-
-## Acknowledgments
-
-snor-oh would not exist without the inspiration and groundwork from these projects:
-
-- **[ani-mime](https://github.com/vietnguyenhoangw/ani-mime)** by [@vietnguyenhoangw](https://github.com/vietnguyenhoangw) - The original desktop mascot for Claude Code that started it all. ani-mime's Tauri-based architecture, sprite animation system, MCP integration, and peer discovery design were the foundation that snor-oh was built upon. Thank you for creating such a delightful concept and sharing it with the community.
-
-- **[floatify](https://github.com/HiepPP/floatify)** by [@HiepPP](https://github.com/HiepPP) - The floating panel design and per-project session card layout that inspired snor-oh's unified panel UI. floatify's approach to presenting multi-session information in a compact, always-visible panel shaped how snor-oh displays project status. Thank you for the elegant design direction.
+- **[floatify](https://github.com/HiepPP/floatify)** by [@HiepPP](https://github.com/HiepPP) — The floating panel and per-project session card design that shaped snor-oh's UI layout.
 
 ## License
 
