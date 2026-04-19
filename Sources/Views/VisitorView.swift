@@ -4,15 +4,12 @@ import SwiftUI
 /// Falls back to the default built-in pet if the visitor's pet isn't available locally.
 struct VisitorSprite: View {
     let pet: String
-    @State private var engine = SpriteEngine()
+    @State private var engine: SpriteEngine?
 
     var body: some View {
         Group {
-            if let frame = engine.currentFrame {
-                Image(decorative: frame, scale: 1.0, orientation: .up)
-                    .interpolation(.none)
-                    .resizable()
-                    .scaledToFit()
+            if let engine {
+                AnimatedSpriteView(engine: engine)
             } else {
                 Image(systemName: "pawprint.fill")
                     .font(.caption)
@@ -20,27 +17,21 @@ struct VisitorSprite: View {
             }
         }
         .onAppear {
-            let effectivePet = resolvePet(pet)
-            engine.setPet(effectivePet)
-            engine.setStatus(.visiting)
+            let e = SpriteEngine()
+            e.setPet(resolvePet(pet))
+            e.setStatus(.visiting)
+            engine = e
         }
         .onDisappear {
-            engine.stop()
+            engine?.stop()
+            engine = nil
         }
     }
 
-    /// Check if the pet exists locally. If not, fall back to default built-in.
     private func resolvePet(_ pet: String) -> String {
-        // Built-in pets are always available
-        if SpriteConfig.builtInPets.contains(pet) {
-            return pet
-        }
-        // Custom pets: check if it exists in the local CustomOhhManager
+        if SpriteConfig.builtInPets.contains(pet) { return pet }
         if SpriteConfig.isCustomPet(pet),
-           CustomOhhManager.shared.ohh(withID: pet) != nil {
-            return pet
-        }
-        // Fallback to default
+           CustomOhhManager.shared.ohh(withID: pet) != nil { return pet }
         return SpriteConfig.builtInPets.first ?? "sprite"
     }
 }
