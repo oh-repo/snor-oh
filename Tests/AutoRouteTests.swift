@@ -150,7 +150,8 @@ final class AutoRouteTests: XCTestCase {
         XCTAssertEqual(routed, bucketB, "disabled rule must be skipped even if earlier in the list")
     }
 
-    func testRouteIncomingItem_archivedTargetFallsBackToActive() {
+    func testRouteIncomingItem_archivedTargetFallsBackToDefault() {
+        let defaultID = manager.buckets[0].id
         let toArchive = manager.createBucket(name: "Will Archive")
         let fallback = manager.createBucket(name: "Fallback")
         manager.setActiveBucket(id: fallback)
@@ -168,8 +169,8 @@ final class AutoRouteTests: XCTestCase {
         )
 
         let routed = manager.routeIncomingItem(kind: .image)
-        XCTAssertEqual(routed, manager.activeBucketID,
-                       "archived rule target must silently fall back to active bucket")
+        XCTAssertEqual(routed, defaultID,
+                       "archived rule target must silently fall back to the default bucket (first non-archived), not the active tab")
     }
 
     func testRouteIncomingItem_multipleMatches_firstWins() {

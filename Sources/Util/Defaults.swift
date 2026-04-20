@@ -45,6 +45,9 @@ enum DefaultsKey {
     /// One-time migration marker: have we seeded default terminal + password
     /// manager bundle IDs into the ignore list?
     static let bucketIgnoreDefaultsSeeded = "bucketIgnoreDefaultsSeeded"
+    /// Background-tint solidity for the Bucket window (0.10…1.0). Mirrors
+    /// `BucketSettings.backgroundOpacity` for documentation.
+    static let bucketBackgroundOpacity = "bucketBackgroundOpacity"
 }
 
 enum DefaultsDefault {

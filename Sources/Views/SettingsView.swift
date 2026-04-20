@@ -75,6 +75,21 @@ struct BucketTab: View {
         )
     }
 
+    /// Slider drives `BucketSettings.backgroundOpacity`. Clamped at the
+    /// write path so the stored value never dips below the UI floor of 0.10
+    /// (matches the slider's minimum — guards against programmatic writes
+    /// or migrated data sneaking a lower value through).
+    private var backgroundOpacityBinding: Binding<Double> {
+        Binding(
+            get: { manager.settings.backgroundOpacity },
+            set: { new in
+                var s = manager.settings
+                s.backgroundOpacity = min(1.0, max(0.10, new))
+                manager.updateSettings(s)
+            }
+        )
+    }
+
     var body: some View {
         Form {
             Section("Clipboard Capture") {
@@ -142,6 +157,19 @@ struct BucketTab: View {
             Section("Hotkey") {
                 Text("Press **⌃⌥B** to toggle the bucket panel.")
                     .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Appearance") {
+                HStack {
+                    Text("Opacity")
+                    Slider(value: backgroundOpacityBinding, in: 0.10...1.0, step: 0.05)
+                    Text("\(Int(manager.settings.backgroundOpacity * 100))%")
+                        .monospacedDigit()
+                        .frame(width: 44, alignment: .trailing)
+                }
+                Text("Lower to see through the bucket while keeping it on screen. Text dims with the window.")
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
 

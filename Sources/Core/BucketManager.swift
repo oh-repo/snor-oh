@@ -74,6 +74,19 @@ final class BucketManager {
     /// sidecar thumbnails without awaiting the store actor. Captured at init.
     nonisolated let storeRootURL: URL
 
+    /// O(1) bucket-by-id lookup — lets `routeIncomingItem` avoid an O(B) linear
+    /// scan inside the per-rule loop. Rebuilt by `rebuildBucketIndex()` after
+    /// any structural change to `buckets` (create / archive / restore / delete).
+    /// Item-level mutations don't invalidate it.
+    @ObservationIgnored
+    private var bucketIndexByID: [UUID: Int] = [:]
+
+    /// Cached id of the "default" bucket — the first non-archived bucket in
+    /// tab order. Used as the no-rule-matched fallback in `routeIncomingItem`.
+    /// Kept in sync with `bucketIndexByID` via `rebuildBucketIndex()`.
+    @ObservationIgnored
+    private var defaultBucketIDCached: UUID?
+
     // MARK: - Init
 
     /// Designated init. Production uses `.shared`; tests construct their own
@@ -84,6 +97,8 @@ final class BucketManager {
         let seed = Bucket(name: "Default", keyboardIndex: 1)
         self.buckets = [seed]
         self.activeBucketID = seed.id
+        self.bucketIndexByID = [seed.id: 0]
+        self.defaultBucketIDCached = seed.id
 
         // Track frontmost app so auto-route `frontmostApp(bundleID:)` rules
         // can resolve without a KVO dance. Block-based observer captures
@@ -132,6 +147,7 @@ final class BucketManager {
                 }
             }
             self.settings = s
+            rebuildBucketIndex()
         } catch {
             NSLog("[bucket] load failed: \(error)")
         }
@@ -186,6 +202,7 @@ final class BucketManager {
         if buckets.filter({ !$0.archived }).count > 12 {
             NSLog("[bucket] soft warning: active bucket count exceeds 12 (now \(buckets.filter { !$0.archived }.count))")
         }
+        rebuildBucketIndex()
         schedulePersist()
         postChanged(change: .bucketCreated, source: .panel, itemID: nil, bucketID: bucket.id)
         return bucket.id
@@ -232,6 +249,7 @@ final class BucketManager {
         }
         buckets[idx].archived = true
         buckets[idx].keyboardIndex = nil
+        rebuildBucketIndex()
         schedulePersist()
         postChanged(change: .bucketArchived, source: .panel, itemID: nil, bucketID: id)
     }
@@ -241,6 +259,7 @@ final class BucketManager {
         guard buckets[idx].archived else { return }
         buckets[idx].archived = false
         buckets[idx].keyboardIndex = nextFreeKeyboardIndex()
+        rebuildBucketIndex()
         schedulePersist()
         postChanged(change: .bucketRestored, source: .panel, itemID: nil, bucketID: id)
     }
@@ -275,6 +294,7 @@ final class BucketManager {
     private func performHardDelete(at idx: Int) {
         let removed = buckets.remove(at: idx)
         settings.autoRouteRules.removeAll { $0.bucketID == removed.id }
+        rebuildBucketIndex()
         Task { [store, bucketID = removed.id] in
             await store.deleteBucketDirectory(bucketID: bucketID)
         }
@@ -304,6 +324,7 @@ final class BucketManager {
 
         // Remove src from state.
         buckets.remove(at: srcIdx)
+        rebuildBucketIndex()
 
         if activeBucketID == srcID {
             activeBucketID = destID
@@ -420,12 +441,14 @@ final class BucketManager {
     }
 
     /// Entry point for the auto-route engine. Returns the bucketID the item
-    /// should land in based on configured rules; falls back to
-    /// `activeBucketID` when no rule matches or the matched rule's target is
-    /// archived.
+    /// should land in based on configured rules; falls back to the **default**
+    /// bucket (first non-archived in tab order) when no rule matches or the
+    /// matched rule's target is archived / missing.
     ///
-    /// Iteration order is the order of `settings.autoRouteRules` — first
-    /// match wins. Disabled rules are skipped silently.
+    /// Performance: bucket target resolution is O(1) via `bucketIndexByID`,
+    /// so total cost is O(R) in the number of enabled rules. Condition
+    /// evaluation is already O(1). Iteration order is `settings.autoRouteRules`
+    /// — first enabled match wins. Disabled rules are skipped silently.
     func routeIncomingItem(
         kind: BucketItemKind,
         sourceBundleID: String? = nil,
@@ -440,16 +463,28 @@ final class BucketManager {
                 frontmostBundleID: lastFrontmostBundleID
             ) else { continue }
 
-            if let target = buckets.first(where: { $0.id == rule.bucketID }) {
-                if !target.archived {
-                    return target.id
-                }
-                NSLog("[bucket] auto-route: target bucket \(target.id) is archived; falling back to active")
-            } else {
-                NSLog("[bucket] auto-route: rule \(rule.id) points at missing bucket \(rule.bucketID); falling back to active")
+            if let idx = bucketIndexByID[rule.bucketID], !buckets[idx].archived {
+                return buckets[idx].id
             }
+            // Target missing or archived — skip to next rule.
         }
-        return activeBucketID
+        // No rule matched: land in the default bucket, not the active one.
+        // Cache is maintained by `rebuildBucketIndex`; `activeBucketID` is a
+        // last-resort safety net (archive/delete invariants keep ≥1 non-archived).
+        return defaultBucketIDCached ?? activeBucketID
+    }
+
+    /// Rebuilds `bucketIndexByID` and `defaultBucketIDCached`. Called only on
+    /// structural changes to `buckets` (create / archive / restore / delete).
+    /// Item-level mutations don't invalidate these caches.
+    private func rebuildBucketIndex() {
+        var map: [UUID: Int] = [:]
+        map.reserveCapacity(buckets.count)
+        for (i, b) in buckets.enumerated() {
+            map[b.id] = i
+        }
+        bucketIndexByID = map
+        defaultBucketIDCached = buckets.first(where: { !$0.archived })?.id
     }
 
     /// Pure condition matcher — no side effects, no state. Factored out as a

@@ -47,9 +47,18 @@ final class BucketWindow: NSPanel {
 
         let content = BucketWindowContent(
             manager: manager,
-            onClose: { [weak self] in self?.orderOut(nil) }
+            onClose: { [weak self] in self?.orderOut(nil) },
+            applyWindowAlpha: { [weak self] alpha in
+                self?.alphaValue = CGFloat(alpha)
+            }
         )
         contentView = NSHostingView(rootView: content)
+
+        // Seed alphaValue from the persisted setting before first display so
+        // the bucket never flashes at 100% on open. `applyWindowAlpha` also
+        // fires from `.onAppear` inside the hosting view, but that runs a
+        // frame later — setting it here avoids the pop.
+        self.alphaValue = CGFloat(manager.settings.backgroundOpacity)
 
         restorePosition()
     }
@@ -131,6 +140,10 @@ final class BucketWindow: NSPanel {
 private struct BucketWindowContent: View {
     let manager: BucketManager
     let onClose: () -> Void
+    /// Called on appear and whenever `backgroundOpacity` changes. The host
+    /// `BucketWindow` forwards this to `NSPanel.alphaValue` so the whole
+    /// window (including VisualEffect) becomes see-through at low values.
+    let applyWindowAlpha: (Double) -> Void
 
     @AppStorage(DefaultsKey.theme) private var theme = "dark"
     @Environment(\.colorScheme) private var colorScheme
@@ -176,6 +189,10 @@ private struct BucketWindowContent: View {
                 )
         )
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .onAppear { applyWindowAlpha(manager.settings.backgroundOpacity) }
+        .onChange(of: manager.settings.backgroundOpacity) { _, new in
+            applyWindowAlpha(new)
+        }
     }
 
     private var header: some View {

@@ -178,9 +178,14 @@ final class BucketManagerMultiBucketTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         try "x".data(using: .utf8)!.write(to: src)
 
-        manager.setActiveBucket(id: otherID)
+        // Route files into Other so the sidecar lands there (replacing the
+        // old "setActive → add" trick that relied on the deprecated active-as-
+        // fallback semantic).
+        var s = manager.settings
+        s.autoRouteRules = [AutoRouteRule(bucketID: otherID, condition: .itemKind(.file))]
+        manager.updateSettings(s)
+
         await manager.add(fileAt: src, source: .panel)
-        manager.setActiveBucket(id: manager.buckets[0].id)
 
         let bucketDir = tempRoot.appendingPathComponent(otherID.uuidString)
         XCTAssertTrue(FileManager.default.fileExists(atPath: bucketDir.path))
@@ -200,7 +205,11 @@ final class BucketManagerMultiBucketTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         try "bytes".data(using: .utf8)!.write(to: src)
 
-        manager.setActiveBucket(id: donorID)
+        // Route files into Donor (no more active-as-fallback shortcut).
+        var s = manager.settings
+        s.autoRouteRules = [AutoRouteRule(bucketID: donorID, condition: .itemKind(.file))]
+        manager.updateSettings(s)
+
         await manager.add(fileAt: src, source: .panel)
         let movedItem = manager.buckets.first { $0.id == donorID }?.items.first
         XCTAssertNotNil(movedItem)
@@ -342,11 +351,13 @@ final class BucketManagerMultiBucketTests: XCTestCase {
 
     // MARK: - Sidecar path correctness (v2 nested layout)
 
-    func testAddFileAtNestsSidecarUnderActiveBucketID() async throws {
-        // Seed a second bucket and make it active so we're not accidentally
-        // writing to the seed Default's UUID.
+    func testAddFileAtNestsSidecarUnderRoutedBucketID() async throws {
+        // Route files to a non-seed bucket so we're sure the sidecar path
+        // uses the *routed* UUID, not the default's.
         let workID = manager.createBucket(name: "Work")
-        manager.setActiveBucket(id: workID)
+        var s = manager.settings
+        s.autoRouteRules = [AutoRouteRule(bucketID: workID, condition: .itemKind(.file))]
+        manager.updateSettings(s)
 
         let src = tempRoot.appendingPathComponent("payload.txt")
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
@@ -354,11 +365,11 @@ final class BucketManagerMultiBucketTests: XCTestCase {
 
         await manager.add(fileAt: src, source: .panel)
 
-        let item = manager.activeBucket.items.first
+        let item = manager.buckets.first { $0.id == workID }?.items.first
         XCTAssertNotNil(item)
         let cached = try XCTUnwrap(item?.fileRef?.cachedPath)
         XCTAssertTrue(cached.hasPrefix("\(workID.uuidString)/files/"),
-                      "new file sidecar must nest under <activeBucketID>/files/ — got \(cached)")
+                      "new file sidecar must nest under <routedBucketID>/files/ — got \(cached)")
 
         let nested = tempRoot.appendingPathComponent(cached)
         XCTAssertTrue(FileManager.default.fileExists(atPath: nested.path))
@@ -370,19 +381,21 @@ final class BucketManagerMultiBucketTests: XCTestCase {
                        "no flat rootURL/files/... file should exist — schema regression")
     }
 
-    func testAddImageDataNestsSidecarUnderActiveBucketID() async throws {
+    func testAddImageDataNestsSidecarUnderRoutedBucketID() async throws {
         let workID = manager.createBucket(name: "Work")
-        manager.setActiveBucket(id: workID)
+        var s = manager.settings
+        s.autoRouteRules = [AutoRouteRule(bucketID: workID, condition: .itemKind(.image))]
+        manager.updateSettings(s)
 
         // Minimal PNG header bytes — classifyFile isn't invoked on imageData path,
         // but we include a recognizable prefix so the file is clearly not empty.
         let bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01, 0x02])
         await manager.add(imageData: bytes, source: .clipboard)
 
-        let item = manager.activeBucket.items.first
+        let item = manager.buckets.first { $0.id == workID }?.items.first
         let cached = try XCTUnwrap(item?.fileRef?.cachedPath)
         XCTAssertTrue(cached.hasPrefix("\(workID.uuidString)/images/"),
-                      "new image sidecar must nest under <activeBucketID>/images/ — got \(cached)")
+                      "new image sidecar must nest under <routedBucketID>/images/ — got \(cached)")
         XCTAssertTrue(FileManager.default.fileExists(atPath: tempRoot.appendingPathComponent(cached).path))
 
         // Flat v1 path must NOT exist.
@@ -392,27 +405,51 @@ final class BucketManagerMultiBucketTests: XCTestCase {
                        "no flat rootURL/images/... file should exist — schema regression")
     }
 
-    // MARK: - routeIncomingItem (Phase 2 stub)
+    // MARK: - routeIncomingItem
 
-    func testRouteIncomingItemReturnsActiveBucketID() {
+    /// With no auto-route rules, items must fall into the default bucket
+    /// (first non-archived in tab order) — NOT whichever tab is currently active.
+    func testRouteIncomingItemFallsBackToDefaultBucketNotActive() {
+        let defaultID = manager.buckets[0].id
         let otherID = manager.createBucket(name: "Other")
         manager.setActiveBucket(id: otherID)
 
         let routed = manager.routeIncomingItem(kind: .text)
-        XCTAssertEqual(routed, otherID)
+        XCTAssertEqual(routed, defaultID,
+                       "no rules should route to the default (first) bucket, not the active tab")
     }
 
-    func testAddGoesToCurrentActiveBucketViaRouting() {
+    func testAddLandsInDefaultBucketWhenNoRulesMatch() {
+        let defaultID = manager.buckets[0].id
         let otherID = manager.createBucket(name: "Other")
         manager.setActiveBucket(id: otherID)
 
         let item = BucketItem(kind: .text, text: "routed")
         manager.add(item, source: .clipboard)
 
-        XCTAssertTrue(manager.buckets.first { $0.id == otherID }?.items
-            .contains { $0.id == item.id } ?? false)
-        XCTAssertFalse(manager.buckets.first { $0.id == manager.buckets[0].id }?.items
-            .contains { $0.id == item.id } ?? true)
+        XCTAssertTrue(manager.buckets.first { $0.id == defaultID }?.items
+            .contains { $0.id == item.id } ?? false,
+            "item should land in default bucket despite active being Other")
+        XCTAssertFalse(manager.buckets.first { $0.id == otherID }?.items
+            .contains { $0.id == item.id } ?? true,
+            "item must NOT land in the active bucket when no rule matches")
+    }
+
+    /// A matching enabled rule still wins over the default fallback.
+    func testAddFollowsMatchingRuleOverDefault() {
+        let targetID = manager.createBucket(name: "Images")
+        var s = manager.settings
+        s.autoRouteRules = [
+            AutoRouteRule(bucketID: targetID, condition: .itemKind(.image), enabled: true)
+        ]
+        manager.updateSettings(s)
+
+        let item = BucketItem(kind: .image)
+        manager.add(item, source: .clipboard)
+
+        XCTAssertTrue(manager.buckets.first { $0.id == targetID }?.items
+            .contains { $0.id == item.id } ?? false,
+            "image item should route to the Images bucket via rule")
     }
 
     // MARK: - Per-bucket LRU
@@ -457,7 +494,8 @@ final class BucketManagerMultiBucketTests: XCTestCase {
     func testMultiBucketStatePersistsAcrossReload() async throws {
         let secondID = manager.createBucket(name: "Second")
         manager.setActiveBucket(id: secondID)
-        manager.add(BucketItem(kind: .text, text: "in-second"), source: .panel)
+        // Explicit toBucket: — routing now goes to default, not active.
+        manager.add(BucketItem(kind: .text, text: "in-second"), source: .panel, toBucket: secondID)
         await manager.flushPendingWrites()
 
         let fresh = BucketManager(store: BucketStore(rootURL: tempRoot))
@@ -489,10 +527,10 @@ final class BucketManagerMultiBucketTests: XCTestCase {
     // MARK: - Cross-bucket dedupe is independent
 
     func testDuplicateAcrossBucketsIsNotDeduped() {
+        let defaultID = manager.buckets[0].id
         let otherID = manager.createBucket(name: "Other")
-        manager.add(BucketItem(kind: .text, text: "same"), source: .panel)
-        manager.setActiveBucket(id: otherID)
-        manager.add(BucketItem(kind: .text, text: "same"), source: .panel)
+        manager.add(BucketItem(kind: .text, text: "same"), source: .panel, toBucket: defaultID)
+        manager.add(BucketItem(kind: .text, text: "same"), source: .panel, toBucket: otherID)
 
         XCTAssertEqual(manager.buckets[0].items.count, 1)
         XCTAssertEqual(manager.buckets.first { $0.id == otherID }?.items.count, 1,

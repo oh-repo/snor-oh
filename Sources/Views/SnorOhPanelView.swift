@@ -223,14 +223,14 @@ struct SnorOhPanelView: View {
     private var speechBubble: some View {
         Text(bubbleManager.currentMessage ?? "")
             .font(.system(size: size.metaFont, weight: .medium))
-            .foregroundStyle(isDark ? .white.opacity(0.7) : .black.opacity(0.6))
+            .foregroundStyle(isDark ? Color.white : Color.black)
             .lineLimit(2)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 20)
             .padding(.vertical, 6)
             .background(
                 Capsule()
-                    .fill(isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06))
+                    .fill(isDark ? Color.white.opacity(0.22) : Color.white)
             )
             .padding(.horizontal, 16)
             .padding(.bottom, 4)

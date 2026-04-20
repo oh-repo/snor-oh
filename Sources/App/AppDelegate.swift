@@ -206,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusBarText() {
         guard let button = statusItem?.button else { return }
         let projects = sessionManager.projects
-        let bucketCount = BucketManager.shared.activeBucket.items.count
+        let bucketCount = BucketManager.shared.activeBuckets.reduce(0) { $0 + $1.items.count }
 
         if projects.isEmpty && bucketCount == 0 {
             button.attributedTitle = NSAttributedString()
@@ -246,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let countStr = NSAttributedString(
                 string: "\(count)",
                 attributes: [
-                    .foregroundColor: NSColor.secondaryLabelColor,
+                    .foregroundColor: NSColor.labelColor,
                     .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
                 ]
             )
@@ -271,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             result.append(NSAttributedString(
                 string: "\(bucketCount)",
                 attributes: [
-                    .foregroundColor: NSColor.secondaryLabelColor,
+                    .foregroundColor: NSColor.labelColor,
                     .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
                 ]
             ))

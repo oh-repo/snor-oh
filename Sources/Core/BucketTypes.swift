@@ -193,6 +193,12 @@ struct BucketSettings: Codable, Sendable {
     var preferredEdge: ScreenEdge
     var hotkey: HotkeyBinding
     var autoRouteRules: [AutoRouteRule]
+    /// Window alpha for the Bucket panel (0.10…1.0). Wired to
+    /// `NSPanel.alphaValue`, so 0.10 makes the whole bucket (including the
+    /// VisualEffect blur) ghostly see-through and 1.0 is fully solid.
+    /// Floor of 0.10 is enforced by the settings slider — never store a
+    /// smaller value or the window becomes unclickable.
+    var backgroundOpacity: Double
 
     init(
         maxItems: Int = 200,
@@ -202,7 +208,8 @@ struct BucketSettings: Codable, Sendable {
         autoHideSeconds: Double = 2.0,
         preferredEdge: ScreenEdge = .right,
         hotkey: HotkeyBinding = HotkeyBinding(key: "B", modifiers: [.control, .option]),
-        autoRouteRules: [AutoRouteRule] = []
+        autoRouteRules: [AutoRouteRule] = [],
+        backgroundOpacity: Double = 0.10
     ) {
         self.maxItems = maxItems
         self.maxStorageBytes = maxStorageBytes
@@ -212,6 +219,7 @@ struct BucketSettings: Codable, Sendable {
         self.preferredEdge = preferredEdge
         self.hotkey = hotkey
         self.autoRouteRules = autoRouteRules
+        self.backgroundOpacity = backgroundOpacity
     }
 
     /// Forward-compatible decoding: any future field added here MUST have a default
@@ -227,6 +235,7 @@ struct BucketSettings: Codable, Sendable {
         self.hotkey = try c.decodeIfPresent(HotkeyBinding.self, forKey: .hotkey)
             ?? HotkeyBinding(key: "B", modifiers: [.control, .option])
         self.autoRouteRules = try c.decodeIfPresent([AutoRouteRule].self, forKey: .autoRouteRules) ?? []
+        self.backgroundOpacity = try c.decodeIfPresent(Double.self, forKey: .backgroundOpacity) ?? 0.10
     }
 }
 
