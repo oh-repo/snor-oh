@@ -17,8 +17,14 @@ export interface SpriteEntry {
   data: string; // base64 PNG
 }
 
+export interface SmartImportMeta {
+  sourceSheet: string; // base64 PNG
+  frameInputs: Record<string, string>; // e.g. { idle: "1-5,7" }
+}
+
 export interface SnorohFile {
   version: number;
   name: string;
-  sprites: Record<string, SpriteEntry>;
+  sprites?: Record<string, SpriteEntry>; // v1 only
+  smartImportMeta?: SmartImportMeta; // v2 only
 }

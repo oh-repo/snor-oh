@@ -33,7 +33,6 @@ function isSnorohFile(v: unknown): v is SnorohFile {
   if (typeof v !== "object" || v === null) return false;
   const f = v as SnorohFile;
   if (typeof f.version !== "number" || typeof f.name !== "string") return false;
-  if (typeof f.sprites !== "object" || f.sprites === null) return false;
   return true;
 }
 
@@ -50,14 +49,22 @@ export async function validatePackage(buf: Buffer): Promise<ValidatedPackage> {
   }
 
   if (!isSnorohFile(parsed)) {
-    throw new ValidationError("invalid_schema", "Missing version/name/sprites");
+    throw new ValidationError("invalid_schema", "Missing version/name");
   }
-  if (parsed.version !== 1) {
+  if (parsed.version !== 1 && parsed.version !== 2) {
     throw new ValidationError("unsupported_version", `Version ${parsed.version} not supported`);
   }
   const name = parsed.name.trim();
   if (name.length === 0 || name.length > 80) {
     throw new ValidationError("invalid_name", "Name must be 1–80 chars");
+  }
+
+  if (parsed.version === 2) {
+    return await validateV2(parsed, name);
+  }
+
+  if (!parsed.sprites) {
+    throw new ValidationError("invalid_schema", "Missing sprites");
   }
 
   const sprites: ValidatedPackage["sprites"] = {};
@@ -113,4 +120,44 @@ export async function validatePackage(buf: Buffer): Promise<ValidatedPackage> {
   }
 
   return { name, version: parsed.version, sprites, previewPng, frameCounts };
+}
+
+async function validateV2(file: SnorohFile, name: string): Promise<ValidatedPackage> {
+  const meta = file.smartImportMeta;
+  if (!meta || typeof meta !== "object") {
+    throw new ValidationError("invalid_schema", "Missing smartImportMeta");
+  }
+  if (typeof meta.sourceSheet !== "string" || meta.sourceSheet.length === 0) {
+    throw new ValidationError("invalid_schema", "Missing sourceSheet");
+  }
+  if (!meta.frameInputs || typeof meta.frameInputs !== "object") {
+    throw new ValidationError("invalid_schema", "Missing frameInputs");
+  }
+
+  const pngBuf = Buffer.from(meta.sourceSheet, "base64");
+  if (pngBuf.byteLength === 0) {
+    throw new ValidationError("empty_sprite", "sourceSheet is empty");
+  }
+  const expected = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (!pngBuf.subarray(0, 8).equals(expected)) {
+    throw new ValidationError("not_png", "sourceSheet is not a PNG");
+  }
+  try {
+    const m = await sharp(pngBuf).metadata();
+    if (!m.width || !m.height) throw new ValidationError("invalid_png", "sourceSheet has no dimensions");
+    if (m.width > MAX_SPRITE_DIM || m.height > MAX_SPRITE_DIM) {
+      throw new ValidationError("png_too_large", `sourceSheet exceeds ${MAX_SPRITE_DIM}px`);
+    }
+  } catch (e) {
+    if (e instanceof ValidationError) throw e;
+    throw new ValidationError("invalid_png", "sourceSheet failed to decode");
+  }
+
+  return {
+    name,
+    version: 2,
+    sprites: {},
+    previewPng: meta.sourceSheet,
+    frameCounts: {},
+  };
 }
