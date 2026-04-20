@@ -225,8 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - HTTP Server
 
     private func startHTTPServer() {
-        let portStr = ProcessInfo.processInfo.environment["SNOR_OH_PORT"] ?? "1234"
-        let port = Int(portStr) ?? 1234
+        let portStr = ProcessInfo.processInfo.environment["SNOR_OH_PORT"] ?? "1425"
+        let port = Int(portStr) ?? 1425
 
         sessionManager.httpPort = port
         httpServer = HTTPServer(sessionManager: sessionManager, port: port)

@@ -158,7 +158,7 @@ final class PeerDiscovery {
         // Extract TXT if available
         var nickname = name
         var pet = "sprite"
-        var httpPort: UInt16 = 1234
+        var httpPort: UInt16 = 1425
         var txtIP: String?
 
         if case .bonjour(let txtRecord) = result.metadata {

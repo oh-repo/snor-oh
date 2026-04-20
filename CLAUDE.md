@@ -24,8 +24,8 @@ Run with `open .build/release-app/snor-oh.app` to verify changes end-to-end.
 ## Architecture
 
 ```
-Shell hooks (curl) → HTTP :1234 → SessionManager → SwiftUI Views
-Claude Code ←stdio→ MCP server (Node.js) ←HTTP→ :1234 → SwiftUI Views
+Shell hooks (curl) → HTTP :1425 → SessionManager → SwiftUI Views
+Claude Code ←stdio→ MCP server (Node.js) ←HTTP→ :1425 → SwiftUI Views
 Bonjour (NWBrowser/NWListener) → PeerDiscovery → SessionManager → PanelView
 ```
 
@@ -43,7 +43,7 @@ Bonjour (NWBrowser/NWListener) → PeerDiscovery → SessionManager → PanelVie
 | `Types.swift` | Status enum, Session, PeerInfo, VisitingDog, ProjectStatus, CustomOhhData, all Codable payloads |
 | `SessionManager.swift` | `@Observable` state: sessions, projects, peers, visitors, usage. Posts `.statusChanged` on every state transition |
 | `Watchdog.swift` | 2s timer: heartbeat timeout, service→idle, idle→sleep |
-| `HTTPServer.swift` | SwiftNIO server on `127.0.0.1:1234`, all route handlers |
+| `HTTPServer.swift` | SwiftNIO server on `127.0.0.1:1425`, all route handlers |
 | `ClaudeCodeConfig.swift` | `@Observable` manager: reads/writes Claude Code plugins, skills, commands, MCP, hooks from `~/.claude/` |
 
 ### Views (`Sources/Views/`)

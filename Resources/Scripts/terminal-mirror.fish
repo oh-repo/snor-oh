@@ -4,7 +4,7 @@
 # Presence is event-driven: POST /session-start on source, /session-end on
 # fish_exit. snor-oh verifies PID liveness via kill(0) every 2s.
 
-set -g _TM_URL "http://127.0.0.1:1234"
+set -g _TM_URL "http://127.0.0.1:1425"
 set -g _TM_SESSIONS_DIR "$HOME/.snor-oh/sessions"
 
 function _tm_urlenc

@@ -37,7 +37,7 @@ Recorded once here; every epic inherits these.
 | Item origin | `BucketItem.sourceBundleID: String?` for real bundle IDs; non-app origins use reserved sentinels: `net.snor-oh.peer:<peer-uuid>`, `net.snor-oh.screenshot`, `net.snor-oh.watchedfolder:<folder-id>`, `net.snor-oh.shortcut`, `net.snor-oh.url-scheme` | Keeps a single field, avoids adding parallel enum until we actually need it |
 | Drop target | Native `NSPasteboard` + `DropDelegate` | Zero 3rd-party; same stack as SwiftUI |
 | Hotkey | Carbon `RegisterEventHotKey` with user-configurable binding | Already have shortcut infra via Defaults |
-| Bonjour transport | Existing `_snor-oh._tcp` + `PeerDiscovery` + `HTTPServer :1234` | Do not add new transport |
+| Bonjour transport | Existing `_snor-oh._tcp` + `PeerDiscovery` + `HTTPServer :1425` | Do not add new transport |
 
 ## What We're Not Building (Ever)
 

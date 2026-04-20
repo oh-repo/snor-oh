@@ -100,7 +100,7 @@ final class ClaudeCodeConfigManager {
     }
 
     func isOwnHook(_ hook: ClaudeHookEntry) -> Bool {
-        hook.command.contains("127.0.0.1:1234")
+        ClaudeHooks.isSnorOhCommand(hook.command)
             || hook.command.contains("snor-oh")
             || hook.command.contains("snoroh")
     }
@@ -109,7 +109,7 @@ final class ClaudeCodeConfigManager {
     func hookLabel(_ hook: ClaudeHookEntry) -> String {
         if let msg = hook.statusMessage, !msg.isEmpty { return msg }
         let cmd = hook.command
-        if cmd.contains("127.0.0.1:1234") {
+        if ClaudeHooks.isSnorOhCommand(cmd) {
             if cmd.contains("state=busy") { return "Track session as busy" }
             if cmd.contains("state=idle") { return "Track session as idle" }
             return "Session tracking"

@@ -4,21 +4,41 @@ import Foundation
 /// triggers snor-oh status updates (busy on tool use, idle on stop/session events).
 enum ClaudeHooks {
 
-    private static let aniMarker = "127.0.0.1:1234"
-    private static let busyCmd = #"curl -s --max-time 1 "http://127.0.0.1:1234/status?pid=$PPID&state=busy&type=task&cwd=$PWD" > /dev/null 2>&1 || true"#
-    private static let idleCmd = #"curl -s --max-time 1 "http://127.0.0.1:1234/status?pid=$PPID&state=idle&cwd=$PWD" > /dev/null 2>&1 || true"#
+    private static let aniMarker = "127.0.0.1:1425"
+    /// Port 1234 was the original server port (changed to 1425 to avoid a
+    /// squatted registration). We still look for it so upgrades detect and
+    /// rewrite pre-existing hooks instead of leaving dead entries behind.
+    private static let legacyAniMarker = "127.0.0.1:1234"
+
+    /// True if the command is ours. Port alone isn't enough: ani-mime (a
+    /// sibling tool) also installs Claude hooks on `127.0.0.1:1234` and uses
+    /// the same `/status?` endpoint. We distinguish by features only snor-oh
+    /// emits:
+    ///   - `/session-start?` or `/session-end?` — lifecycle endpoints unique to us
+    ///   - `/status?` carrying `cwd=` — ani-mime's status hooks never include cwd
+    /// Hooks that target our port but match neither fingerprint are assumed
+    /// foreign and left untouched.
+    static func isSnorOhCommand(_ cmd: String) -> Bool {
+        guard cmd.contains(aniMarker) || cmd.contains(legacyAniMarker) else { return false }
+        if cmd.contains("/session-start?") || cmd.contains("/session-end?") { return true }
+        if cmd.contains("/status?") && cmd.contains("cwd=") { return true }
+        return false
+    }
+
+    private static let busyCmd = #"curl -s --max-time 1 "http://127.0.0.1:1425/status?pid=$PPID&state=busy&type=task&cwd=$PWD" > /dev/null 2>&1 || true"#
+    private static let idleCmd = #"curl -s --max-time 1 "http://127.0.0.1:1425/status?pid=$PPID&state=idle&cwd=$PWD" > /dev/null 2>&1 || true"#
 
     /// Claude SessionStart: register with snor-oh and drop a pidfile. `lstart`
     /// output is URL-encoded inline (spaces → %20, ':' left literal — curl
     /// accepts both). A single line so the hook schema stays simple.
     private static let sessionStartCmd = #"""
-mkdir -p ~/.snor-oh/sessions && LSTART=$(ps -o lstart= -p $PPID | sed 's/^ *//;s/ *$//') && printf '{"pid":%d,"cwd":"%s","kind":"claude","started_at":"%s"}\n' "$PPID" "$PWD" "$LSTART" > ~/.snor-oh/sessions/$PPID.json && curl -s --max-time 1 "http://127.0.0.1:1234/session-start?pid=$PPID&cwd=$(printf %s "$PWD" | sed 's/ /%20/g')&kind=claude&started_at=$(printf %s "$LSTART" | sed 's/ /%20/g')" > /dev/null 2>&1 || true
+mkdir -p ~/.snor-oh/sessions && LSTART=$(ps -o lstart= -p $PPID | sed 's/^ *//;s/ *$//') && printf '{"pid":%d,"cwd":"%s","kind":"claude","started_at":"%s"}\n' "$PPID" "$PWD" "$LSTART" > ~/.snor-oh/sessions/$PPID.json && curl -s --max-time 1 "http://127.0.0.1:1425/session-start?pid=$PPID&cwd=$(printf %s "$PWD" | sed 's/ /%20/g')&kind=claude&started_at=$(printf %s "$LSTART" | sed 's/ /%20/g')" > /dev/null 2>&1 || true
 """#
 
     /// Claude SessionEnd: delete pidfile + notify server. Paired with the
     /// Watchdog's `kill(0)` sweep so force-quit skips still get cleaned up.
     private static let sessionEndCmd = #"""
-rm -f ~/.snor-oh/sessions/$PPID.json; curl -s --max-time 1 "http://127.0.0.1:1234/session-end?pid=$PPID" > /dev/null 2>&1 || true
+rm -f ~/.snor-oh/sessions/$PPID.json; curl -s --max-time 1 "http://127.0.0.1:1425/session-end?pid=$PPID" > /dev/null 2>&1 || true
 """#
 
     /// Install Claude Code hooks if not already present.
@@ -77,7 +97,7 @@ rm -f ~/.snor-oh/sessions/$PPID.json; curl -s --max-time 1 "http://127.0.0.1:123
         guard let data = try? Data(contentsOf: settingsURL),
               let content = String(data: data, encoding: .utf8) else { return }
 
-        guard content.contains(aniMarker) else { return }
+        guard content.contains(aniMarker) || content.contains(legacyAniMarker) else { return }
 
         guard var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               var hooks = settings["hooks"] as? [String: Any] else { return }
@@ -96,7 +116,7 @@ rm -f ~/.snor-oh/sessions/$PPID.json; curl -s --max-time 1 "http://127.0.0.1:123
                 var updated: [[String: Any]] = []
                 for hook in hooksList {
                     guard let cmd = hook["command"] as? String,
-                          cmd.contains(aniMarker) else {
+                          isSnorOhCommand(cmd) else {
                         updated.append(hook)
                         continue
                     }
@@ -108,6 +128,13 @@ rm -f ~/.snor-oh/sessions/$PPID.json; curl -s --max-time 1 "http://127.0.0.1:123
                     let isStatusStyle = cmd.contains("/status?")
                     if isStatusStyle && (cmd.contains("pid=0") || !cmd.contains("cwd=")) {
                         newCmd = cmd.contains("state=busy") ? busyCmd : idleCmd
+                    }
+
+                    // Rewrite legacy port to the current one. Covers lifecycle
+                    // hooks and well-formed status hooks that the schema fix
+                    // above doesn't touch.
+                    if newCmd.contains(legacyAniMarker) {
+                        newCmd = newCmd.replacingOccurrences(of: legacyAniMarker, with: aniMarker)
                     }
 
                     if !matcher.isEmpty {
@@ -140,7 +167,7 @@ rm -f ~/.snor-oh/sessions/$PPID.json; curl -s --max-time 1 "http://127.0.0.1:123
                     let matcher = entry["matcher"] as? String ?? ""
                     guard matcher.isEmpty else { return false }
                     guard let hooksList = entry["hooks"] as? [[String: Any]] else { return false }
-                    return hooksList.contains { ($0["command"] as? String)?.contains(aniMarker) == true }
+                    return hooksList.contains { ($0["command"] as? String).map(isSnorOhCommand) == true }
                 }
                 if !hasEmpty {
                     let hooksArray = snorohCmds.map { cmd -> [String: Any] in
@@ -173,7 +200,7 @@ rm -f ~/.snor-oh/sessions/$PPID.json; curl -s --max-time 1 "http://127.0.0.1:123
         let hasHook = entries.contains { entry in
             guard let hooksList = entry["hooks"] as? [[String: Any]] else { return false }
             return hooksList.contains { h in
-                (h["command"] as? String)?.contains(aniMarker) == true
+                (h["command"] as? String).map(isSnorOhCommand) == true
             }
         }
 

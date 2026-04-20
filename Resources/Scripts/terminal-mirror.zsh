@@ -5,7 +5,7 @@
 # /session-end from the EXIT trap. snor-oh verifies PID liveness via
 # kill(0) every 2 s, so force-quit terminals still get cleaned up.
 
-export TAURI_MIRROR_PORT=1234
+export TAURI_MIRROR_PORT=1425
 _TM_URL="http://127.0.0.1:${TAURI_MIRROR_PORT}"
 _TM_SESSIONS_DIR="$HOME/.snor-oh/sessions"
 

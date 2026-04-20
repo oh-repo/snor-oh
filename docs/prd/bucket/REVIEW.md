@@ -31,7 +31,7 @@ Each research-identified feature maps to exactly one owning epic. No orphans, no
 | Screenshot auto-catch | 🟡 Should | 03 | Opt-in, FSEvents |
 | Multi-bucket (named, colored) | 🟡 Should | 04 | Schema v1→v2 migration |
 | Per-app auto-route rules | 🟡 Should | 04 | Frontmost app → bucket |
-| Peer send/receive via Bonjour | 🟡 Should | 05 | Reuses `:1234` HTTPServer |
+| Peer send/receive via Bonjour | 🟡 Should | 05 | Reuses `:1425` HTTPServer |
 | Per-peer trust / auto-accept | 🟡 Should | 05 | – |
 | Notes scratchpad (≤10 tabs) | 🟡 Should | 06 | Hotkey `⌃⌥N` |
 | Text snippets w/ trigger expansion | 🟡 Should | 06 | Hotkey `⌃⌥V`, Accessibility opt-in |

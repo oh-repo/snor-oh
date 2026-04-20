@@ -4,7 +4,7 @@
 # Presence is event-driven: POST /session-start on source, /session-end on
 # EXIT. snor-oh verifies PID liveness via kill(0) every 2s.
 
-export TAURI_MIRROR_PORT=1234
+export TAURI_MIRROR_PORT=1425
 _TM_URL="http://127.0.0.1:${TAURI_MIRROR_PORT}"
 _TM_SESSIONS_DIR="$HOME/.snor-oh/sessions"
 _TM_CMD_RUNNING=0

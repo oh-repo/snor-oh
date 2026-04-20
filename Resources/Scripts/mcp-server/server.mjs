@@ -15,7 +15,7 @@
 import { createInterface } from "node:readline";
 import http from "node:http";
 
-const PORT = process.env.SNOR_OH_PORT || 1234;
+const PORT = process.env.SNOR_OH_PORT || 1425;
 const BASE = `http://127.0.0.1:${PORT}`;
 
 const PROTOCOL_VERSION = "2024-11-05";

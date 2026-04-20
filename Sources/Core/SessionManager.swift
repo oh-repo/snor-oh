@@ -45,7 +45,7 @@ final class SessionManager {
 
     var pet: String = "sprite"
     var nickname: String = "Buddy"
-    var httpPort: Int = 1234
+    var httpPort: Int = 1425
 
     // MARK: Usage Analytics
 

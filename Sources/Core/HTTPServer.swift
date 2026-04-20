@@ -2,7 +2,7 @@ import Foundation
 import NIO
 import NIOHTTP1
 
-/// Lightweight HTTP server on 0.0.0.0:1234 using SwiftNIO.
+/// Lightweight HTTP server on 0.0.0.0:1425 using SwiftNIO.
 /// Binds to all interfaces so peers on LAN can send /visit requests.
 final class HTTPServer {
     private let group: MultiThreadedEventLoopGroup
@@ -10,7 +10,7 @@ final class HTTPServer {
     private let sessionManager: SessionManager
     let port: Int
 
-    init(sessionManager: SessionManager, port: Int = 1234) {
+    init(sessionManager: SessionManager, port: Int = 1425) {
         self.sessionManager = sessionManager
         self.port = port
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)

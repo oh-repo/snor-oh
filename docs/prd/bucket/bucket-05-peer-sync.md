@@ -4,7 +4,7 @@
 
 ## Problem Statement
 
-Yoink's iOS↔macOS Handoff is its single most-praised cross-device feature, and Paste justifies its $29.99/yr subscription mostly on iCloud sync ([research §Should-Have](../../research/bucket-feature-research.md#-should-have-high-value--mentioned-in-23-apps-strong-reviews)). snor-oh *already* has Bonjour peer discovery (`_snor-oh._tcp`) and an HTTP server on `:1234` — the infrastructure for moving things between two Macs on the same network is already deployed. Charging a subscription for iCloud would be absurd when a 200-line PR turns the existing visit channel into a bucket-share channel.
+Yoink's iOS↔macOS Handoff is its single most-praised cross-device feature, and Paste justifies its $29.99/yr subscription mostly on iCloud sync ([research §Should-Have](../../research/bucket-feature-research.md#-should-have-high-value--mentioned-in-23-apps-strong-reviews)). snor-oh *already* has Bonjour peer discovery (`_snor-oh._tcp`) and an HTTP server on `:1425` — the infrastructure for moving things between two Macs on the same network is already deployed. Charging a subscription for iCloud would be absurd when a 200-line PR turns the existing visit channel into a bucket-share channel.
 
 ## Hypothesis
 
@@ -134,7 +134,7 @@ If auto-accept: `200 OK` with body `{"transferID": "<uuid>", "state": "accepted"
 | Sender | Extend existing `VisitManager` with `sendBucketItem(_:to:)` — mirrors the `sendVisit` pattern. |
 | Payload | Use `URLSession.shared.uploadTask(with:fromFile:)` for large files; stream from sidecar `cachedPath`. |
 | Receive handler | On `/bucket/receive` the server writes file bytes to a temp path, creates `PendingTransfer` on `BucketManager`, posts a `.bucketIncoming` notification. Panel displays an accept/deny card; on accept, file moves into bucket storage. |
-| Auth | Current `:1234` server is bound to `127.0.0.1` — peer-facing server is a second NIO bootstrap bound to LAN interface, behind a Bonjour record. *Check existing code*: if `HTTPServer` already binds LAN-wide (for peer visit feature), reuse; otherwise add a second bootstrap. |
+| Auth | Current `:1425` server is bound to `127.0.0.1` — peer-facing server is a second NIO bootstrap bound to LAN interface, behind a Bonjour record. *Check existing code*: if `HTTPServer` already binds LAN-wide (for peer visit feature), reuse; otherwise add a second bootstrap. |
 | Trust UI | Incoming modal is not a modal window — uses existing `BubbleManager` with tappable action buttons (same treatment as task-completion bubbles). |
 | Privacy | Never send items whose `sourceBundleID` is in the global ignore list. |
 
