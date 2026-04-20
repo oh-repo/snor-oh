@@ -351,11 +351,13 @@ enum SmartImport {
         let layout = gridLayout(frameCount: frameInfos.count)
         guard let stripCtx = createRGBAContext(width: layout.width, height: layout.height) else { return nil }
 
-        // Flip the strip context to use top-left origin,
-        // so grid row 0 is at the top — matching SpriteCache.extractFrames
-        stripCtx.translateBy(x: 0, y: CGFloat(layout.height))
-        stripCtx.scaleBy(x: 1, y: -1)
-
+        // Leave stripCtx's CTM at default (bottom-left origin). A previous
+        // implementation pre-flipped with translate+scale(1, -1) hoping to
+        // get top-left drawing coords, but `ctx.draw(image, in:)` respects
+        // the CTM — under a y-flip, the image itself is drawn vertically
+        // MIRRORED. That turned every v2-imported ohh upside down. We now
+        // compute `drawY` in bottom-up coords so the memory layout matches
+        // the top-left convention SpriteCache expects without any CTM games.
         for (i, info) in frameInfos.enumerated() {
             let bbox = info.bbox
             let cropW = bbox.x2 - bbox.x1
@@ -366,11 +368,15 @@ enum SmartImport {
             let scaledH = Int((Double(cropH) * scale).rounded())
             let ox = Int((Double(frameSize - scaledW) / 2.0).rounded())
             let oy = Int((Double(frameSize - scaledH) / 2.0).rounded())
-            let cellX = (i % layout.cols) * frameSize
-            let cellY = (i / layout.cols) * frameSize
 
-            // Both buffer access (getTightBBox) and CGImage.cropping use the same
-            // coordinate system: y=0 at top-left of the pixel data. No flip needed.
+            // Cell position using top-left convention (matches SpriteCache).
+            let cellX = (i % layout.cols) * frameSize
+            let cellYTopDown = (i / layout.cols) * frameSize
+            // Convert to bottom-up CG y of the draw rect's origin.
+            let drawY = layout.height - cellYTopDown - oy - scaledH
+
+            // getTightBBox + CGImage.cropping both use top-left coords on the
+            // source image. No CTM involved here.
             let srcRect = CGRect(
                 x: info.frame.x1 + bbox.x1,
                 y: info.frame.y1 + bbox.y1,
@@ -382,7 +388,7 @@ enum SmartImport {
             stripCtx.interpolationQuality = .none
             stripCtx.draw(
                 cropped,
-                in: CGRect(x: cellX + ox, y: cellY + oy, width: scaledW, height: scaledH)
+                in: CGRect(x: cellX + ox, y: drawY, width: scaledW, height: scaledH)
             )
         }
 

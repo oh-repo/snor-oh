@@ -771,43 +771,88 @@ struct AboutTab: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
+        ScrollView {
+            VStack(spacing: 16) {
+                Image(systemName: "pawprint.fill")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.blue)
+                    .padding(.top, 8)
 
-            Image(systemName: "pawprint.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.blue)
-
-            Text("snor-oh")
-                .font(.title.bold())
-
-            Text("Version \(version) (\(build))\(devMode ? " [DEV]" : "")")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .onTapGesture {
-                    versionClickCount += 1
-                    if versionClickCount >= 10 {
-                        devMode.toggle()
-                        versionClickCount = 0
-                    }
+                VStack(spacing: 2) {
+                    Text("snor-oh")
+                        .font(.title.bold())
+                    Text("Version \(version) (\(build))\(devMode ? " [DEV]" : "")")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .onTapGesture {
+                            versionClickCount += 1
+                            if versionClickCount >= 10 {
+                                devMode.toggle()
+                                versionClickCount = 0
+                            }
+                        }
                 }
 
-            Text("A desktop mascot that reacts to your terminal and Claude Code activity.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 300)
-
-            Divider()
-                .frame(width: 200)
-
-            HStack(spacing: 20) {
-                Link("GitHub", destination: URL(string: "https://github.com/thanh-dong/snor-oh")!)
+                Text("A desktop companion for your coding sessions.")
                     .font(.callout)
-            }
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
 
-            Spacer()
+                VStack(alignment: .leading, spacing: 14) {
+                    featureRow(
+                        symbol: "pawprint.fill",
+                        title: "A mascot that cares",
+                        detail: "Pixel pet reacts to your terminals, Claude Code, and when tasks finish."
+                    )
+                    featureRow(
+                        symbol: "rectangle.stack.fill",
+                        title: "Live session panel",
+                        detail: "See every open terminal and Claude session — Working… dots tell you what's busy."
+                    )
+                    featureRow(
+                        symbol: "tray.full.fill",
+                        title: "Smart clipboard",
+                        detail: "Drag anything onto the mascot. Multi-bucket storage with auto-routing rules."
+                    )
+                    featureRow(
+                        symbol: "bolt.fill",
+                        title: "Quick paste anywhere",
+                        detail: "⌘⇧V opens recent items — pick one and it pastes into your focused app."
+                    )
+                }
+                .frame(maxWidth: 360)
+
+                Divider()
+                    .frame(width: 200)
+
+                HStack(spacing: 20) {
+                    Link("GitHub", destination: URL(string: "https://github.com/thanh-dong/snor-oh")!)
+                        .font(.callout)
+                }
+                .padding(.bottom, 8)
+            }
+            .padding()
         }
-        .padding()
+    }
+
+    /// Same feature-row layout as the first-launch wizard — fixed-width
+    /// symbol column + bold title + one-line detail. Kept local to AboutTab
+    /// so the two views stay visually consistent without cross-file imports.
+    private func featureRow(symbol: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 15))
+                .foregroundStyle(.blue)
+                .frame(width: 22, alignment: .center)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
     }
 }
