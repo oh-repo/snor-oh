@@ -16,6 +16,16 @@ final class HotkeyRegistrar {
     private var handler: EventHandlerRef?
     private var callback: (() -> Void)?
 
+    /// Refs for ⌃⌥1…⌃⌥9 bucket-switcher hotkeys (Phase 6). Index i holds the
+    /// ref registered for N = i + 1 (id 1001…1009). Nil slots mean that
+    /// particular Carbon registration failed.
+    private var bucketSwitcherHotKeys: [EventHotKeyRef?] = []
+    private var bucketSwitcherCallback: ((Int) -> Void)?
+
+    /// Base ID range for bucket-switcher hotkeys. Keeps them disjoint from the
+    /// bucket-toggle hotkey (id 1) so the single event handler can demux.
+    private static let bucketSwitcherIDBase: UInt32 = 1000
+
     private init() {}
 
     // MARK: - Public
@@ -58,6 +68,58 @@ final class HotkeyRegistrar {
         callback = nil
     }
 
+    /// Registers ⌃⌥1 through ⌃⌥9 as bucket-switcher hotkeys (Phase 6).
+    /// The handler is invoked with N (1-based) on keypress. Callers should
+    /// resolve N against their current visible-bucket list and no-op when
+    /// N is out of range — no error is raised here.
+    ///
+    /// Safe to call repeatedly; earlier registrations are torn down first.
+    func registerBucketSwitchers(handler: @escaping (Int) -> Void) {
+        unregisterBucketSwitchers()
+        installHandlerIfNeeded()
+
+        let carbonMods = UInt32(controlKey) | UInt32(optionKey)
+        let digitKeyCodes: [Int] = [
+            kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3,
+            kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6,
+            kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9,
+        ]
+
+        var refs: [EventHotKeyRef?] = []
+        for (i, keyCode) in digitKeyCodes.enumerated() {
+            var ref: EventHotKeyRef?
+            let hotKeyID = EventHotKeyID(
+                signature: Self.signature,
+                id: Self.bucketSwitcherIDBase + UInt32(i + 1)
+            )
+            let status = RegisterEventHotKey(
+                UInt32(keyCode),
+                carbonMods,
+                hotKeyID,
+                GetApplicationEventTarget(),
+                0,
+                &ref
+            )
+            if status != noErr {
+                NSLog("[hotkey] bucket-switcher \(i + 1) RegisterEventHotKey failed: \(status)")
+                refs.append(nil)
+            } else {
+                refs.append(ref)
+            }
+        }
+
+        self.bucketSwitcherHotKeys = refs
+        self.bucketSwitcherCallback = handler
+    }
+
+    func unregisterBucketSwitchers() {
+        for ref in bucketSwitcherHotKeys {
+            if let ref { UnregisterEventHotKey(ref) }
+        }
+        bucketSwitcherHotKeys.removeAll()
+        bucketSwitcherCallback = nil
+    }
+
     // MARK: - Private: event handler installation
 
     private func installHandlerIfNeeded() {
@@ -88,8 +150,15 @@ final class HotkeyRegistrar {
                 return noErr
             }
 
+            let rawID = hkID.id
             DispatchQueue.main.async {
-                me.callback?()
+                if rawID == 1 {
+                    me.callback?()
+                } else if rawID > HotkeyRegistrar.bucketSwitcherIDBase
+                    && rawID <= HotkeyRegistrar.bucketSwitcherIDBase + 9 {
+                    let n = Int(rawID - HotkeyRegistrar.bucketSwitcherIDBase)
+                    me.bucketSwitcherCallback?(n)
+                }
             }
             return noErr
         }

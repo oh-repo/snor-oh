@@ -310,7 +310,7 @@ final class BucketManagerTests: XCTestCase {
         XCTAssertEqual(item.kind, .file)
         XCTAssertEqual(item.fileRef?.originalPath, src.path)
         let cached = try XCTUnwrap(item.fileRef?.cachedPath)
-        XCTAssertTrue(cached.hasPrefix("files/"))
+        XCTAssertTrue(cached.hasPrefix("\(manager.activeBucketID.uuidString)/files/"))
         let absolute = tempRoot.appendingPathComponent(cached)
         XCTAssertTrue(FileManager.default.fileExists(atPath: absolute.path))
         XCTAssertEqual(try Data(contentsOf: absolute), "hello".data(using: .utf8))
@@ -323,7 +323,7 @@ final class BucketManagerTests: XCTestCase {
         let item = manager.activeBucket.items[0]
         XCTAssertEqual(item.kind, .image)
         let cached = try XCTUnwrap(item.fileRef?.cachedPath)
-        XCTAssertTrue(cached.hasPrefix("images/"))
+        XCTAssertTrue(cached.hasPrefix("\(manager.activeBucketID.uuidString)/images/"))
         let absolute = tempRoot.appendingPathComponent(cached)
         XCTAssertTrue(FileManager.default.fileExists(atPath: absolute.path))
     }
@@ -341,5 +341,14 @@ final class BucketManagerTests: XCTestCase {
         let loaded = try await store.loadBucket()
         XCTAssertEqual(loaded.items.count, 1)
         XCTAssertEqual(loaded.items[0].text, "not-yet-written")
+    }
+
+    // MARK: - Create-sheet name-collision handling
+
+    func testCreateBucketAppliesUniqueNameForUserCollision() {
+        _ = manager.createBucket(name: "Acme", colorHex: "#FF9500", emoji: nil)
+        let secondID = manager.createBucket(name: "Acme", colorHex: "#007AFF", emoji: nil)
+        let second = manager.buckets.first { $0.id == secondID }
+        XCTAssertEqual(second?.name, "Acme 2")
     }
 }

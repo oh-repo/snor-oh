@@ -102,18 +102,84 @@ struct Bucket: Identifiable, Codable, Sendable {
     var name: String
     var items: [BucketItem]
     var createdAt: Date
+    var colorHex: String
+    var emoji: String?
+    var archived: Bool
+    var keyboardIndex: Int?
 
     init(
         id: UUID = UUID(),
         name: String = "Default",
         items: [BucketItem] = [],
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        colorHex: String = "#FF9500",
+        emoji: String? = nil,
+        archived: Bool = false,
+        keyboardIndex: Int? = nil
     ) {
         self.id = id
         self.name = name
         self.items = items
         self.createdAt = createdAt
+        self.colorHex = colorHex
+        self.emoji = emoji
+        self.archived = archived
+        self.keyboardIndex = keyboardIndex
     }
+
+    /// Forward-compatible decoding: Epic 01 persisted Buckets without
+    /// colorHex/emoji/archived/keyboardIndex. Older JSON still decodes with defaults.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.items = try c.decodeIfPresent([BucketItem].self, forKey: .items) ?? []
+        self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex) ?? "#FF9500"
+        self.emoji = try c.decodeIfPresent(String.self, forKey: .emoji)
+        self.archived = try c.decodeIfPresent(Bool.self, forKey: .archived) ?? false
+        self.keyboardIndex = try c.decodeIfPresent(Int.self, forKey: .keyboardIndex)
+    }
+}
+
+// MARK: - Auto-route rules
+
+enum RouteCondition: Codable, Sendable, Hashable {
+    case frontmostApp(bundleID: String)
+    case itemKind(BucketItemKind)
+    case sourceApp(bundleID: String)
+    case urlHost(String)
+}
+
+struct AutoRouteRule: Codable, Sendable, Hashable, Identifiable {
+    let id: UUID
+    var bucketID: UUID
+    var condition: RouteCondition
+    var enabled: Bool
+
+    init(id: UUID = UUID(), bucketID: UUID, condition: RouteCondition, enabled: Bool = true) {
+        self.id = id
+        self.bucketID = bucketID
+        self.condition = condition
+        self.enabled = enabled
+    }
+}
+
+// MARK: - Palette
+
+enum BucketPalette {
+    static let swatches: [String] = [
+        "#FF3B30", "#FF9500", "#FFCC00", "#34C759",
+        "#007AFF", "#AF52DE", "#8E8E93", "#A2845E",
+    ]
+}
+
+// MARK: - Manifest envelope (v2)
+
+struct BucketManifestV2: Codable, Sendable {
+    var schemaVersion: Int
+    var activeBucketID: UUID
+    var buckets: [Bucket]
 }
 
 // MARK: - Settings
@@ -126,6 +192,7 @@ struct BucketSettings: Codable, Sendable {
     var autoHideSeconds: Double
     var preferredEdge: ScreenEdge
     var hotkey: HotkeyBinding
+    var autoRouteRules: [AutoRouteRule]
 
     init(
         maxItems: Int = 200,
@@ -134,7 +201,8 @@ struct BucketSettings: Codable, Sendable {
         ignoredBundleIDs: Set<String> = [],
         autoHideSeconds: Double = 2.0,
         preferredEdge: ScreenEdge = .right,
-        hotkey: HotkeyBinding = HotkeyBinding(key: "B", modifiers: [.control, .option])
+        hotkey: HotkeyBinding = HotkeyBinding(key: "B", modifiers: [.control, .option]),
+        autoRouteRules: [AutoRouteRule] = []
     ) {
         self.maxItems = maxItems
         self.maxStorageBytes = maxStorageBytes
@@ -143,6 +211,7 @@ struct BucketSettings: Codable, Sendable {
         self.autoHideSeconds = autoHideSeconds
         self.preferredEdge = preferredEdge
         self.hotkey = hotkey
+        self.autoRouteRules = autoRouteRules
     }
 
     /// Forward-compatible decoding: any future field added here MUST have a default
@@ -157,6 +226,7 @@ struct BucketSettings: Codable, Sendable {
         self.preferredEdge = try c.decodeIfPresent(ScreenEdge.self, forKey: .preferredEdge) ?? .right
         self.hotkey = try c.decodeIfPresent(HotkeyBinding.self, forKey: .hotkey)
             ?? HotkeyBinding(key: "B", modifiers: [.control, .option])
+        self.autoRouteRules = try c.decodeIfPresent([AutoRouteRule].self, forKey: .autoRouteRules) ?? []
     }
 }
 
@@ -231,4 +301,10 @@ enum BucketChangeKind: String, Sendable {
     case pinned
     case unpinned
     case cleared
+    case activeBucketChanged = "active-bucket-changed"
+    case bucketCreated = "bucket-created"
+    case bucketUpdated = "bucket-updated"
+    case bucketArchived = "bucket-archived"
+    case bucketRestored = "bucket-restored"
+    case bucketDeleted = "bucket-deleted"
 }

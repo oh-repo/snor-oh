@@ -8,11 +8,9 @@ import CryptoKit
 /// Runs on `@MainActor` because SwiftUI observes its state. Disk I/O is
 /// delegated to a `BucketStore` actor so the UI thread never blocks.
 ///
-/// Lifecycle mirrors `CustomOhhManager`:
-///  1. `AppDelegate.applicationDidFinishLaunching` calls `.shared.load()`.
-///  2. UI reads `activeBucket` / `settings` via `@Observable`.
-///  3. Mutations (`add`, `remove`, `togglePin`, …) update state synchronously,
-///     post `.bucketChanged`, and schedule a debounced persist.
+/// Epic 04 expands the state from a single `Bucket` to a `[Bucket]` keyed by
+/// `activeBucketID`. `activeBucket` remains a computed view for call sites
+/// that only care about "the currently focused bucket".
 @Observable
 @MainActor
 final class BucketManager {
@@ -23,8 +21,28 @@ final class BucketManager {
 
     // MARK: - State
 
-    private(set) var activeBucket: Bucket = Bucket(name: "Default")
+    private(set) var buckets: [Bucket]
+    private(set) var activeBucketID: UUID
     private(set) var settings: BucketSettings = BucketSettings()
+
+    /// All non-archived buckets (tab-strip source).
+    var activeBuckets: [Bucket] { buckets.filter { !$0.archived } }
+
+    /// All archived buckets (settings list source).
+    var archivedBuckets: [Bucket] { buckets.filter { $0.archived } }
+
+    /// Current focused bucket. Computed over `buckets[activeBucketID]` so
+    /// mutations land in the right place even after the tab switches.
+    var activeBucket: Bucket {
+        guard let idx = buckets.firstIndex(where: { $0.id == activeBucketID }) else {
+            // Self-heal: fall back to first non-archived, or create a Default.
+            if let first = buckets.first(where: { !$0.archived }) {
+                return first
+            }
+            return Bucket(name: "Default", keyboardIndex: 1)
+        }
+        return buckets[idx]
+    }
 
     /// Present-only-in-tests hook to wait on the pending persist debounce.
     /// Production callers should never need this.
@@ -35,6 +53,22 @@ final class BucketManager {
     private let store: BucketStore
     private var loaded = false
     private var persistDebounce: Task<Void, Never>?
+
+    /// Latest frontmost app bundle ID, updated via `NSWorkspace` activation
+    /// notifications. Used by the auto-route engine to match
+    /// `RouteCondition.frontmostApp(bundleID:)` rules. Nil until the first
+    /// activation notification fires.
+    @MainActor private var lastFrontmostBundleID: String? = nil
+
+    /// Observer handle for `NSWorkspace.didActivateApplicationNotification`.
+    /// Retained so `deinit` can remove it and avoid a dangling observer.
+    ///
+    /// `@ObservationIgnored` skips the `@Observable` macro's storage rewrite
+    /// so we can apply `nonisolated(unsafe)` — sound here because the handle
+    /// is assigned once in `init` (on the main actor) and read once in
+    /// `deinit` (nonisolated, no live concurrent references).
+    @ObservationIgnored
+    private nonisolated(unsafe) var frontmostObserver: NSObjectProtocol?
 
     /// The root of on-disk bucket storage — exposed so views can resolve
     /// sidecar thumbnails without awaiting the store actor. Captured at init.
@@ -47,6 +81,30 @@ final class BucketManager {
     init(store: BucketStore = BucketStore()) {
         self.store = store
         self.storeRootURL = store.rootURL
+        let seed = Bucket(name: "Default", keyboardIndex: 1)
+        self.buckets = [seed]
+        self.activeBucketID = seed.id
+
+        // Track frontmost app so auto-route `frontmostApp(bundleID:)` rules
+        // can resolve without a KVO dance. Block-based observer captures
+        // `self` weakly and hops to the main actor to mutate state.
+        self.frontmostObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundleID = app?.bundleIdentifier
+            Task { @MainActor [weak self] in
+                self?.lastFrontmostBundleID = bundleID
+            }
+        }
+    }
+
+    deinit {
+        if let obs = frontmostObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
+        }
     }
 
     // MARK: - Lifecycle
@@ -63,9 +121,16 @@ final class BucketManager {
 
     private func loadAsync() async {
         do {
-            let b = try await store.loadBucket()
+            let manifest = try await store.loadManifest()
             let s = try await store.loadSettings()
-            self.activeBucket = b
+            self.buckets = manifest.buckets
+            self.activeBucketID = manifest.activeBucketID
+            // If the active ID points at a missing/archived bucket, fall back.
+            if !self.buckets.contains(where: { $0.id == self.activeBucketID && !$0.archived }) {
+                if let first = self.buckets.first(where: { !$0.archived }) {
+                    self.activeBucketID = first.id
+                }
+            }
             self.settings = s
         } catch {
             NSLog("[bucket] load failed: \(error)")
@@ -88,35 +153,385 @@ final class BucketManager {
         updateSettings(s)
     }
 
-    // MARK: - Mutations
+    // MARK: - Active tab
 
-    /// Inserts an item at the head (newest-first), fires `.bucketChanged`,
-    /// enforces LRU caps, schedules a persist.
-    ///
-    /// **Dedupe semantics**: if an equivalent item already exists anywhere in
-    /// the bucket (not just at the head), the existing item is *promoted*
-    /// to the top with a refreshed `lastAccessedAt` — no duplicate is added.
-    /// This handles both the "⌘C same thing twice" and the "drag same file
-    /// twice" cases without bloating the bucket.
-    func add(_ item: BucketItem, source: BucketChangeSource) {
-        if let existingIdx = duplicateIndex(of: item) {
-            promoteExisting(at: existingIdx, source: source)
+    func setActiveBucket(id: UUID) {
+        guard let bucket = buckets.first(where: { $0.id == id }), !bucket.archived else { return }
+        guard activeBucketID != id else { return }
+        activeBucketID = id
+        schedulePersist()
+        postChanged(change: .activeBucketChanged, source: .panel, itemID: nil, bucketID: id)
+    }
+
+    // MARK: - Bucket CRUD
+
+    @discardableResult
+    func createBucket(
+        name: String,
+        colorHex: String? = nil,
+        emoji: String? = nil
+    ) -> UUID {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = trimmed.isEmpty ? "Untitled" : trimmed
+        let resolvedName = uniqueBucketName(from: base)
+        let resolvedColor = colorHex ?? nextPaletteColor()
+        let bucket = Bucket(
+            name: resolvedName,
+            colorHex: resolvedColor,
+            emoji: emoji,
+            archived: false,
+            keyboardIndex: nextFreeKeyboardIndex()
+        )
+        buckets.append(bucket)
+        if buckets.filter({ !$0.archived }).count > 12 {
+            NSLog("[bucket] soft warning: active bucket count exceeds 12 (now \(buckets.filter { !$0.archived }.count))")
+        }
+        schedulePersist()
+        postChanged(change: .bucketCreated, source: .panel, itemID: nil, bucketID: bucket.id)
+        return bucket.id
+    }
+
+    func renameBucket(id: UUID, to newName: String) {
+        guard let idx = buckets.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        buckets[idx].name = trimmed
+        schedulePersist()
+        postChanged(change: .bucketUpdated, source: .panel, itemID: nil, bucketID: id)
+    }
+
+    func setColor(id: UUID, colorHex: String) {
+        guard let idx = buckets.firstIndex(where: { $0.id == id }) else { return }
+        buckets[idx].colorHex = colorHex
+        schedulePersist()
+        postChanged(change: .bucketUpdated, source: .panel, itemID: nil, bucketID: id)
+    }
+
+    func setEmoji(id: UUID, emoji: String?) {
+        guard let idx = buckets.firstIndex(where: { $0.id == id }) else { return }
+        // Normalize empty string to nil so UI consistently treats "no emoji".
+        let normalized = emoji?.trimmingCharacters(in: .whitespacesAndNewlines)
+        buckets[idx].emoji = (normalized?.isEmpty ?? true) ? nil : normalized
+        schedulePersist()
+        postChanged(change: .bucketUpdated, source: .panel, itemID: nil, bucketID: id)
+    }
+
+    /// Archives a bucket. Refuses if the target is the active bucket OR if it
+    /// would leave zero active buckets. Callers must `setActiveBucket(id:)` to
+    /// something else first — this is intentional so focus never shifts silently.
+    func archiveBucket(id: UUID) {
+        guard let idx = buckets.firstIndex(where: { $0.id == id }) else { return }
+        guard !buckets[idx].archived else { return }
+        if id == activeBucketID {
+            NSLog("[bucket] archiveBucket: refusing to archive active bucket \(id); call setActiveBucket first")
             return
         }
-        activeBucket.items.insert(item, at: 0)
-        evictIfNeeded()
-        postChanged(change: .added, source: source, itemID: item.id)
+        if buckets.filter({ !$0.archived }).count <= 1 {
+            NSLog("[bucket] archiveBucket: refusing — would leave zero active buckets")
+            return
+        }
+        buckets[idx].archived = true
+        buckets[idx].keyboardIndex = nil
+        schedulePersist()
+        postChanged(change: .bucketArchived, source: .panel, itemID: nil, bucketID: id)
+    }
+
+    func restoreBucket(id: UUID) {
+        guard let idx = buckets.firstIndex(where: { $0.id == id }) else { return }
+        guard buckets[idx].archived else { return }
+        buckets[idx].archived = false
+        buckets[idx].keyboardIndex = nextFreeKeyboardIndex()
+        schedulePersist()
+        postChanged(change: .bucketRestored, source: .panel, itemID: nil, bucketID: id)
+    }
+
+    /// Permanently deletes `id`.
+    ///
+    /// - If `mergeInto` is nil: requires the target to not be the active bucket
+    ///   (caller must pre-switch). The bucket's on-disk `<id>/` subdirectory
+    ///   is removed recursively; auto-route rules pointing at it are dropped.
+    /// - If `mergeInto` is non-nil: items are prepended to the destination,
+    ///   sidecar files move from `<src>/` to `<dst>/` with paths rewritten,
+    ///   auto-route rules are re-pointed at the destination. The `mergeInto`
+    ///   target must be an existing, non-archived bucket.
+    func deleteBucket(id: UUID, mergeInto: UUID? = nil) {
+        guard let idx = buckets.firstIndex(where: { $0.id == id }) else { return }
+        if let destID = mergeInto {
+            guard let destIdx = buckets.firstIndex(where: { $0.id == destID }),
+                  !buckets[destIdx].archived else {
+                NSLog("[bucket] deleteBucket: mergeInto target missing or archived; aborting")
+                return
+            }
+            performMergeDelete(srcIdx: idx, destIdx: destIdx)
+        } else {
+            if id == activeBucketID {
+                NSLog("[bucket] deleteBucket: refusing — active bucket must be switched before non-merge delete")
+                return
+            }
+            performHardDelete(at: idx)
+        }
+    }
+
+    private func performHardDelete(at idx: Int) {
+        let removed = buckets.remove(at: idx)
+        settings.autoRouteRules.removeAll { $0.bucketID == removed.id }
+        Task { [store, bucketID = removed.id] in
+            await store.deleteBucketDirectory(bucketID: bucketID)
+        }
+        schedulePersist()
+        postChanged(change: .bucketDeleted, source: .panel, itemID: nil, bucketID: removed.id)
+    }
+
+    private func performMergeDelete(srcIdx: Int, destIdx: Int) {
+        // Snapshot both ids before any mutation.
+        let srcID = buckets[srcIdx].id
+        let destID = buckets[destIdx].id
+
+        // Rewrite item paths: src's items' `<src-id>/...` prefixes become `<dest-id>/...`.
+        let rewrittenItems = buckets[srcIdx].items.map { rewriteItemPaths($0, from: srcID, to: destID) }
+        buckets[destIdx].items.insert(contentsOf: rewrittenItems, at: 0)
+
+        // Re-point auto-route rules.
+        for i in settings.autoRouteRules.indices
+        where settings.autoRouteRules[i].bucketID == srcID {
+            settings.autoRouteRules[i].bucketID = destID
+        }
+
+        // Fold the on-disk sidecar tree.
+        Task { [store] in
+            try? await store.mergeBucketDirectory(from: srcID, into: destID)
+        }
+
+        // Remove src from state.
+        buckets.remove(at: srcIdx)
+
+        if activeBucketID == srcID {
+            activeBucketID = destID
+            postChanged(change: .activeBucketChanged, source: .panel, itemID: nil, bucketID: destID)
+        }
+        schedulePersist()
+        postChanged(change: .bucketDeleted, source: .panel, itemID: nil, bucketID: srcID)
+    }
+
+    /// Moves an item from its current bucket to `toBucket`. Rewrites the
+    /// sidecar file path from `<src>/...` to `<dst>/...` and moves the file
+    /// on disk. No-op if either end is missing, or if the item already lives
+    /// in the destination.
+    func moveItem(_ itemID: UUID, toBucket destID: UUID) {
+        guard let destIdx = buckets.firstIndex(where: { $0.id == destID }) else { return }
+        for srcIdx in buckets.indices {
+            guard srcIdx != destIdx else { continue }
+            if let itemIdx = buckets[srcIdx].items.firstIndex(where: { $0.id == itemID }) {
+                let srcID = buckets[srcIdx].id
+                var item = buckets[srcIdx].items.remove(at: itemIdx)
+                item.lastAccessedAt = Date()
+                let rewritten = rewriteItemPaths(item, from: srcID, to: destID)
+                buckets[destIdx].items.insert(rewritten, at: 0)
+
+                // Move sidecar files on disk so paths match.
+                let toMove = collectRelativePaths(of: item).filter {
+                    $0.hasPrefix("\(srcID.uuidString)/")
+                }
+                if !toMove.isEmpty {
+                    Task { [store] in
+                        for rel in toMove {
+                            _ = try? await store.moveSidecarBetweenBuckets(
+                                relativePath: rel,
+                                from: srcID,
+                                to: destID
+                            )
+                        }
+                    }
+                }
+
+                schedulePersist()
+                postChanged(change: .removed, source: .panel, itemID: itemID, bucketID: srcID)
+                postChanged(change: .added, source: .panel, itemID: itemID, bucketID: destID)
+                return
+            }
+        }
+    }
+
+    /// Rewrites any sidecar relative paths on an item from the `<src>/` prefix
+    /// to a `<dst>/` prefix. Used by `moveItem` and `deleteBucket(mergeInto:)`.
+    private func rewriteItemPaths(_ item: BucketItem, from src: UUID, to dst: UUID) -> BucketItem {
+        let srcPrefix = "\(src.uuidString)/"
+        let dstPrefix = "\(dst.uuidString)/"
+        var updated = item
+        if var fileRef = updated.fileRef, let cached = fileRef.cachedPath, cached.hasPrefix(srcPrefix) {
+            fileRef.cachedPath = dstPrefix + cached.dropFirst(srcPrefix.count)
+            updated.fileRef = fileRef
+        }
+        if var urlMeta = updated.urlMeta {
+            if let fav = urlMeta.faviconPath, fav.hasPrefix(srcPrefix) {
+                urlMeta.faviconPath = dstPrefix + fav.dropFirst(srcPrefix.count)
+            }
+            if let og = urlMeta.ogImagePath, og.hasPrefix(srcPrefix) {
+                urlMeta.ogImagePath = dstPrefix + og.dropFirst(srcPrefix.count)
+            }
+            updated.urlMeta = urlMeta
+        }
+        return updated
+    }
+
+    private func collectRelativePaths(of item: BucketItem) -> [String] {
+        var out: [String] = []
+        if let p = item.fileRef?.cachedPath { out.append(p) }
+        if let p = item.urlMeta?.faviconPath { out.append(p) }
+        if let p = item.urlMeta?.ogImagePath { out.append(p) }
+        return out
+    }
+
+    // MARK: - Item mutations
+
+    /// Inserts an item at the head (newest-first) of the auto-routed bucket,
+    /// fires `.bucketChanged`, enforces per-bucket LRU caps, schedules a persist.
+    ///
+    /// **Dedupe semantics**: if an equivalent item already exists anywhere in
+    /// the destination bucket, the existing item is *promoted* to the top with
+    /// a refreshed `lastAccessedAt` — no duplicate is added.
+    func add(_ item: BucketItem, source: BucketChangeSource) {
+        let destID = routeIncomingItem(
+            kind: item.kind,
+            sourceBundleID: item.sourceBundleID,
+            urlHost: item.urlMeta.flatMap { URL(string: $0.urlString)?.host }
+        )
+        insertItem(item, intoBucketID: destID, source: source)
+    }
+
+    /// Bypass auto-routing — used by drag-to-tab and callers who already know
+    /// the destination (e.g. moveItem, tests).
+    func add(_ item: BucketItem, source: BucketChangeSource, toBucket bucketID: UUID) {
+        insertItem(item, intoBucketID: bucketID, source: source)
+    }
+
+    /// Core insert path — does dedupe, eviction, notification, persist. All
+    /// other add entrypoints funnel through here.
+    private func insertItem(_ item: BucketItem, intoBucketID bucketID: UUID, source: BucketChangeSource) {
+        guard let idx = buckets.firstIndex(where: { $0.id == bucketID }) else { return }
+        if let existingIdx = duplicateIndex(of: item, inBucketAt: idx) {
+            promoteExisting(bucketIdx: idx, itemIdx: existingIdx, source: source)
+            return
+        }
+        buckets[idx].items.insert(item, at: 0)
+        evictIfNeeded(bucketIdx: idx)
+        postChanged(change: .added, source: source, itemID: item.id, bucketID: buckets[idx].id)
         schedulePersist()
     }
 
-    /// Moves the item at `idx` to the head of the bucket and refreshes
-    /// `lastAccessedAt`. Used for dedup hits — user sees the existing item
-    /// re-surface at the top of the list.
-    private func promoteExisting(at idx: Int, source: BucketChangeSource) {
-        var existing = activeBucket.items.remove(at: idx)
+    /// Entry point for the auto-route engine. Returns the bucketID the item
+    /// should land in based on configured rules; falls back to
+    /// `activeBucketID` when no rule matches or the matched rule's target is
+    /// archived.
+    ///
+    /// Iteration order is the order of `settings.autoRouteRules` — first
+    /// match wins. Disabled rules are skipped silently.
+    func routeIncomingItem(
+        kind: BucketItemKind,
+        sourceBundleID: String? = nil,
+        urlHost: String? = nil
+    ) -> UUID {
+        for rule in settings.autoRouteRules where rule.enabled {
+            guard BucketManager.evaluateCondition(
+                rule.condition,
+                itemKind: kind,
+                sourceBundleID: sourceBundleID,
+                urlHost: urlHost,
+                frontmostBundleID: lastFrontmostBundleID
+            ) else { continue }
+
+            if let target = buckets.first(where: { $0.id == rule.bucketID }) {
+                if !target.archived {
+                    return target.id
+                }
+                NSLog("[bucket] auto-route: target bucket \(target.id) is archived; falling back to active")
+            } else {
+                NSLog("[bucket] auto-route: rule \(rule.id) points at missing bucket \(rule.bucketID); falling back to active")
+            }
+        }
+        return activeBucketID
+    }
+
+    /// Pure condition matcher — no side effects, no state. Factored out as a
+    /// `static` method so tests can drive it without constructing a manager.
+    static func evaluateCondition(
+        _ condition: RouteCondition,
+        itemKind: BucketItemKind,
+        sourceBundleID: String?,
+        urlHost: String?,
+        frontmostBundleID: String?
+    ) -> Bool {
+        switch condition {
+        case .frontmostApp(let id):
+            return frontmostBundleID == id
+        case .itemKind(let k):
+            return itemKind == k
+        case .sourceApp(let id):
+            return sourceBundleID == id
+        case .urlHost(let host):
+            return (urlHost ?? "").caseInsensitiveCompare(host) == .orderedSame
+        }
+    }
+
+    // MARK: - Auto-route rule mutations
+
+    /// Appends a new rule. Persisted via `updateSettings`.
+    func addAutoRouteRule(_ rule: AutoRouteRule) {
+        var s = settings
+        s.autoRouteRules.append(rule)
+        updateSettings(s)
+    }
+
+    /// Replaces an existing rule matched by `id`. No-op if the id is unknown.
+    func updateAutoRouteRule(_ rule: AutoRouteRule) {
+        var s = settings
+        guard let idx = s.autoRouteRules.firstIndex(where: { $0.id == rule.id }) else { return }
+        s.autoRouteRules[idx] = rule
+        updateSettings(s)
+    }
+
+    func removeAutoRouteRule(id: UUID) {
+        var s = settings
+        s.autoRouteRules.removeAll { $0.id == id }
+        updateSettings(s)
+    }
+
+    /// Flips `enabled` on the rule with this id. No-op if unknown.
+    func toggleAutoRouteRule(id: UUID) {
+        var s = settings
+        guard let idx = s.autoRouteRules.firstIndex(where: { $0.id == id }) else { return }
+        s.autoRouteRules[idx].enabled.toggle()
+        updateSettings(s)
+    }
+
+    /// Moves the rule at `fromIndex` to `toIndex` (clamped). Used by the
+    /// settings list to let users re-prioritize auto-route rules.
+    func moveAutoRouteRule(fromIndex: Int, toIndex: Int) {
+        var s = settings
+        guard s.autoRouteRules.indices.contains(fromIndex) else { return }
+        let clampedTo = max(0, min(toIndex, s.autoRouteRules.count - 1))
+        guard fromIndex != clampedTo else { return }
+        let rule = s.autoRouteRules.remove(at: fromIndex)
+        s.autoRouteRules.insert(rule, at: clampedTo)
+        updateSettings(s)
+    }
+
+    #if DEBUG
+    /// Test-only injection for frontmost bundle ID. Production callers
+    /// rely on the `NSWorkspace` activation observer to populate this.
+    @MainActor
+    func _setLastFrontmostBundleID(_ id: String?) {
+        lastFrontmostBundleID = id
+    }
+    #endif
+
+    /// Moves the item at `itemIdx` in `bucketIdx` to the head of that bucket
+    /// and refreshes `lastAccessedAt`. Used for dedupe hits.
+    private func promoteExisting(bucketIdx: Int, itemIdx: Int, source: BucketChangeSource) {
+        var existing = buckets[bucketIdx].items.remove(at: itemIdx)
         existing.lastAccessedAt = Date()
-        activeBucket.items.insert(existing, at: 0)
-        postChanged(change: .added, source: source, itemID: existing.id)
+        buckets[bucketIdx].items.insert(existing, at: 0)
+        postChanged(change: .added, source: source, itemID: existing.id, bucketID: buckets[bucketIdx].id)
         schedulePersist()
     }
 
@@ -127,19 +542,23 @@ final class BucketManager {
     /// Dedupes by `originalPath` *before* the sidecar copy — so re-dragging
     /// the same file is a cheap no-op (no redundant disk I/O).
     func add(fileAt url: URL, source: BucketChangeSource, stackGroupID: UUID? = nil) async {
-        // Cheap path-based dedupe — no sidecar copy needed on a hit.
-        if let idx = activeBucket.items.firstIndex(where: { existing in
-            guard existing.kind == .file || existing.kind == .folder || existing.kind == .image,
-                  let p = existing.fileRef?.originalPath, !p.isEmpty else { return false }
-            return p == url.path
-        }) {
-            promoteExisting(at: idx, source: source)
-            return
-        }
-
         var isDir: ObjCBool = false
         FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
         let kind = classifyFile(url: url, isDirectory: isDir.boolValue)
+
+        let destID = routeIncomingItem(kind: kind)
+
+        // Cheap path-based dedupe within destination — no sidecar copy on a hit.
+        if let destIdx = buckets.firstIndex(where: { $0.id == destID }),
+           let idx = buckets[destIdx].items.firstIndex(where: { existing in
+                guard existing.kind == .file || existing.kind == .folder || existing.kind == .image,
+                      let p = existing.fileRef?.originalPath, !p.isEmpty else { return false }
+                return p == url.path
+           }) {
+            promoteExisting(bucketIdx: destIdx, itemIdx: idx, source: source)
+            return
+        }
+
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
         let uti = (try? url.resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier)
             ?? (isDir.boolValue ? "public.folder" : "public.data")
@@ -150,6 +569,7 @@ final class BucketManager {
             let subdir = kind == .image ? "images" : "files"
             cachedPath = try? await store.copySidecar(
                 from: url,
+                bucketID: destID,
                 itemID: itemID,
                 subdir: subdir
             )
@@ -167,7 +587,7 @@ final class BucketManager {
                 displayName: url.lastPathComponent
             )
         )
-        add(item, source: source)
+        insertItem(item, intoBucketID: destID, source: source)
     }
 
     /// Async entry point for raw image bytes (pasteboard image drops).
@@ -178,15 +598,18 @@ final class BucketManager {
     /// existing item.
     func add(imageData data: Data, source: BucketChangeSource, stackGroupID: UUID? = nil) async {
         let hash = sha256Hex(data)
+        let destID = routeIncomingItem(kind: .image)
 
-        if let idx = activeBucket.items.firstIndex(where: { $0.contentHash == hash }) {
-            promoteExisting(at: idx, source: source)
+        if let destIdx = buckets.firstIndex(where: { $0.id == destID }),
+           let idx = buckets[destIdx].items.firstIndex(where: { $0.contentHash == hash }) {
+            promoteExisting(bucketIdx: destIdx, itemIdx: idx, source: source)
             return
         }
 
         let itemID = UUID()
         let cachedPath = try? await store.writeSidecar(
             data,
+            bucketID: destID,
             itemID: itemID,
             subdir: "images",
             ext: "png"
@@ -204,7 +627,7 @@ final class BucketManager {
                 displayName: "image-\(itemID.uuidString.prefix(8)).png"
             )
         )
-        add(item, source: source)
+        insertItem(item, intoBucketID: destID, source: source)
     }
 
     private func classifyFile(url: URL, isDirectory: Bool) -> BucketItemKind {
@@ -216,45 +639,54 @@ final class BucketManager {
         return .file
     }
 
-    /// Removes by ID; deletes any sidecar files.
-    /// `source` defaults to `.panel` since most callers are UI-driven, but can
-    /// be overridden (e.g. from peer-sync or watched-folder cleanup in later
-    /// epics) so Epic 02's catch reaction picks the right intensity.
+    /// Removes by ID; deletes any sidecar files. Scans all buckets so a stale
+    /// UUID from any tab still lands on the right bucket.
     func remove(id: UUID, source: BucketChangeSource = .panel) {
-        guard let idx = activeBucket.items.firstIndex(where: { $0.id == id }) else { return }
-        let removed = activeBucket.items.remove(at: idx)
-        cleanupSidecars(for: [removed])
-        postChanged(change: .removed, source: source, itemID: id)
-        schedulePersist()
+        for bucketIdx in buckets.indices {
+            if let itemIdx = buckets[bucketIdx].items.firstIndex(where: { $0.id == id }) {
+                let removed = buckets[bucketIdx].items.remove(at: itemIdx)
+                cleanupSidecars(for: [removed])
+                postChanged(change: .removed, source: source, itemID: id, bucketID: buckets[bucketIdx].id)
+                schedulePersist()
+                return
+            }
+        }
     }
 
     /// Toggles `pinned`; pinned items are never auto-evicted and never
     /// removed by `clearUnpinned()`.
     func togglePin(id: UUID, source: BucketChangeSource = .panel) {
-        guard let idx = activeBucket.items.firstIndex(where: { $0.id == id }) else { return }
-        activeBucket.items[idx].pinned.toggle()
-        let kind: BucketChangeKind = activeBucket.items[idx].pinned ? .pinned : .unpinned
-        postChanged(change: kind, source: source, itemID: id)
-        schedulePersist()
+        for bucketIdx in buckets.indices {
+            if let itemIdx = buckets[bucketIdx].items.firstIndex(where: { $0.id == id }) {
+                buckets[bucketIdx].items[itemIdx].pinned.toggle()
+                let kind: BucketChangeKind = buckets[bucketIdx].items[itemIdx].pinned ? .pinned : .unpinned
+                postChanged(change: kind, source: source, itemID: id, bucketID: buckets[bucketIdx].id)
+                schedulePersist()
+                return
+            }
+        }
     }
 
-    /// Removes all unpinned items and their sidecars.
+    /// Removes all unpinned items and their sidecars from the active bucket.
     func clearUnpinned(source: BucketChangeSource = .panel) {
-        let removed = activeBucket.items.filter { !$0.pinned }
+        guard let idx = buckets.firstIndex(where: { $0.id == activeBucketID }) else { return }
+        let removed = buckets[idx].items.filter { !$0.pinned }
         guard !removed.isEmpty else { return }
-        activeBucket.items.removeAll { !$0.pinned }
+        buckets[idx].items.removeAll { !$0.pinned }
         cleanupSidecars(for: removed)
-        postChanged(change: .cleared, source: source, itemID: nil)
+        postChanged(change: .cleared, source: source, itemID: nil, bucketID: buckets[idx].id)
         schedulePersist()
     }
 
     /// Fuzzy-ish filter across text, URL string, URL title, file display name,
-    /// and `sourceBundleID`. Case-insensitive, no ranking.
+    /// and `sourceBundleID`. Case-insensitive, no ranking. Scoped to active
+    /// bucket to match the visible list.
     func search(_ query: String) -> [BucketItem] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return activeBucket.items }
+        let source = activeBucket.items
+        guard !q.isEmpty else { return source }
         let needle = q.lowercased()
-        return activeBucket.items.filter { item in
+        return source.filter { item in
             if item.text?.lowercased().contains(needle) == true { return true }
             if item.urlMeta?.urlString.lowercased().contains(needle) == true { return true }
             if item.urlMeta?.title?.lowercased().contains(needle) == true { return true }
@@ -268,7 +700,9 @@ final class BucketManager {
 
     func updateSettings(_ new: BucketSettings) {
         self.settings = new
-        evictIfNeeded()
+        for idx in buckets.indices {
+            evictIfNeeded(bucketIdx: idx)
+        }
         Task { [store] in
             try? await store.saveSettings(new)
         }
@@ -276,10 +710,8 @@ final class BucketManager {
 
     // MARK: - Dedupe helper
 
-    /// Returns the index of an existing item that is "the same" as
-    /// `candidate`, or nil if there's no match. The scan is across the whole
-    /// bucket — not just the head — so a non-adjacent duplicate (user ⌘C'd
-    /// A, then B, then A) resolves to a hit on the first A.
+    /// Returns the index of an existing item in bucket at `bucketIdx` that is
+    /// "the same" as `candidate`, or nil if there's no match.
     ///
     /// Match rules (kinds must agree):
     ///   - `.text` / `.richText`: payloads equal.
@@ -288,12 +720,8 @@ final class BucketManager {
     ///   - `.file` / `.folder`: either same `originalPath` or same
     ///     `contentHash` (if both sides computed one).
     ///   - `.image`: same `contentHash`.
-    ///
-    /// Files are *not* hashed on drop — path equality catches the common
-    /// "drag the same file twice" case cheaply. Images *are* hashed
-    /// (done in `add(imageData:)`) since there's no path to compare.
-    private func duplicateIndex(of candidate: BucketItem) -> Int? {
-        activeBucket.items.firstIndex { existing in
+    private func duplicateIndex(of candidate: BucketItem, inBucketAt bucketIdx: Int) -> Int? {
+        buckets[bucketIdx].items.firstIndex { existing in
             guard existing.kind == candidate.kind else { return false }
             switch candidate.kind {
             case .text, .richText:
@@ -327,46 +755,40 @@ final class BucketManager {
         return digest.compactMap { String(format: "%02x", $0) }.joined()
     }
 
-    // MARK: - LRU eviction
+    // MARK: - LRU eviction (per bucket)
 
-    /// Enforces `maxItems` and `maxStorageBytes`. Pinned items are spared.
-    /// Only runs if caps are exceeded.
-    private func evictIfNeeded() {
-        // 1. Count cap: drop oldest unpinned until under cap.
-        if activeBucket.items.count > settings.maxItems {
-            evictOldestUnpinned(toCount: settings.maxItems)
+    private func evictIfNeeded(bucketIdx: Int) {
+        guard buckets.indices.contains(bucketIdx) else { return }
+        if buckets[bucketIdx].items.count > settings.maxItems {
+            evictOldestUnpinned(bucketIdx: bucketIdx, toCount: settings.maxItems)
         }
-        // 2. Size cap: quick heuristic — sum cached sidecar sizes from item metadata.
-        //    (Full on-disk audit lives in BucketStore and runs only on demand.)
-        let approxSize = activeBucket.items.reduce(Int64(0)) { acc, item in
+        let approxSize = buckets[bucketIdx].items.reduce(Int64(0)) { acc, item in
             acc + (item.fileRef?.byteSize ?? 0)
         }
         if approxSize > settings.maxStorageBytes {
-            evictOldestUnpinnedBySize(target: settings.maxStorageBytes)
+            evictOldestUnpinnedBySize(bucketIdx: bucketIdx, target: settings.maxStorageBytes)
         }
     }
 
-    private func evictOldestUnpinned(toCount maxCount: Int) {
-        // Items are newest-first; oldest at the tail.
+    private func evictOldestUnpinned(bucketIdx: Int, toCount maxCount: Int) {
         var removed: [BucketItem] = []
-        while activeBucket.items.count > maxCount {
-            // Find last unpinned (oldest). If none, stop.
-            guard let lastUnpinnedIdx = activeBucket.items.lastIndex(where: { !$0.pinned }) else {
+        while buckets[bucketIdx].items.count > maxCount {
+            guard let lastUnpinnedIdx = buckets[bucketIdx].items.lastIndex(where: { !$0.pinned }) else {
                 break
             }
-            removed.append(activeBucket.items.remove(at: lastUnpinnedIdx))
+            removed.append(buckets[bucketIdx].items.remove(at: lastUnpinnedIdx))
         }
         if !removed.isEmpty {
             cleanupSidecars(for: removed)
         }
     }
 
-    private func evictOldestUnpinnedBySize(target: Int64) {
+    private func evictOldestUnpinnedBySize(bucketIdx: Int, target: Int64) {
         var removed: [BucketItem] = []
-        var size = activeBucket.items.reduce(Int64(0)) { $0 + ($1.fileRef?.byteSize ?? 0) }
+        var size = buckets[bucketIdx].items.reduce(Int64(0)) { $0 + ($1.fileRef?.byteSize ?? 0) }
         while size > target {
-            guard let idx = activeBucket.items.lastIndex(where: { !$0.pinned }) else { break }
-            let item = activeBucket.items.remove(at: idx)
+            guard let idx = buckets[bucketIdx].items.lastIndex(where: { !$0.pinned }) else { break }
+            let item = buckets[bucketIdx].items.remove(at: idx)
             size -= item.fileRef?.byteSize ?? 0
             removed.append(item)
         }
@@ -388,15 +810,57 @@ final class BucketManager {
         }
     }
 
+    // MARK: - Palette / keyboard helpers
+
+    private func nextPaletteColor() -> String {
+        let used = Set(buckets.map { $0.colorHex })
+        if let free = BucketPalette.swatches.first(where: { !used.contains($0) }) {
+            return free
+        }
+        return BucketPalette.swatches[buckets.count % BucketPalette.swatches.count]
+    }
+
+    /// Returns `base` if no existing bucket already holds that name; otherwise
+    /// suffixes " 2", " 3", … until a free slot is found. Matching is exact
+    /// and whitespace-trimmed, scoped across active + archived buckets to
+    /// avoid restore-time collisions.
+    func uniqueBucketName(from base: String) -> String {
+        let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = trimmed.isEmpty ? "Untitled" : trimmed
+        let taken = Set(buckets.map { $0.name })
+        if !taken.contains(candidate) { return candidate }
+        var n = 2
+        while taken.contains("\(candidate) \(n)") {
+            n += 1
+        }
+        return "\(candidate) \(n)"
+    }
+
+    private func nextFreeKeyboardIndex() -> Int? {
+        let used = Set(buckets.compactMap { $0.keyboardIndex })
+        for candidate in 1...9 where !used.contains(candidate) {
+            return candidate
+        }
+        return nil
+    }
+
     // MARK: - Notifications
 
-    private func postChanged(change: BucketChangeKind, source: BucketChangeSource, itemID: UUID?) {
+    private func postChanged(
+        change: BucketChangeKind,
+        source: BucketChangeSource,
+        itemID: UUID?,
+        bucketID: UUID? = nil
+    ) {
         var info: [String: Any] = [
             "change": change.rawValue,
             "source": source.rawValue,
         ]
         if let itemID {
             info["itemID"] = itemID
+        }
+        if let bucketID {
+            info["bucketID"] = bucketID
         }
         NotificationCenter.default.post(
             name: .bucketChanged,
@@ -417,9 +881,13 @@ final class BucketManager {
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
             guard let self else { return }
-            let snapshot = self.activeBucket
+            let snapshot = BucketManifestV2(
+                schemaVersion: BucketStore.currentSchemaVersion,
+                activeBucketID: self.activeBucketID,
+                buckets: self.buckets
+            )
             self.persistInFlight = Task { [store] in
-                try? await store.saveBucket(snapshot)
+                try? await store.saveManifest(snapshot)
             }
         }
     }
@@ -429,13 +897,28 @@ final class BucketManager {
     /// arrived within the 500 ms debounce window.
     func flushPendingWrites() async {
         persistDebounce?.cancel()
-        let snapshot = activeBucket
-        try? await store.saveBucket(snapshot)
+        let snapshot = BucketManifestV2(
+            schemaVersion: BucketStore.currentSchemaVersion,
+            activeBucketID: activeBucketID,
+            buckets: buckets
+        )
+        try? await store.saveManifest(snapshot)
         try? await store.saveSettings(settings)
     }
 
     /// Test alias for `flushPendingWrites()`. Kept so existing tests compile.
     func flushForTests() async {
         await flushPendingWrites()
+    }
+
+    // MARK: - Bucket switcher (Phase 6)
+
+    /// Pure resolver for the ⌃⌥N bucket-switcher hotkey. Given a 1-based index
+    /// `n` and the current list of visible (non-archived) buckets, returns the
+    /// target bucket's UUID, or nil when `n` is out of range. Factored as a
+    /// `static` helper so tests don't need the Carbon event plumbing.
+    static func resolveBucketSwitcherTarget(n: Int, activeBuckets: [Bucket]) -> UUID? {
+        guard n >= 1, n <= activeBuckets.count else { return nil }
+        return activeBuckets[n - 1].id
     }
 }

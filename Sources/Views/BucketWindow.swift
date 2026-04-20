@@ -150,6 +150,11 @@ private struct BucketWindowContent: View {
             Divider()
                 .opacity(isDark ? 0.15 : 0.2)
 
+            BucketTabsView(manager: manager)
+
+            Divider()
+                .opacity(isDark ? 0.12 : 0.15)
+
             BucketView(
                 manager: manager,
                 storeRootURL: manager.storeRootURL,

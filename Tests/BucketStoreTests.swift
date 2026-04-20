@@ -70,10 +70,11 @@ final class BucketStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         try "hello".data(using: .utf8)!.write(to: src)
 
+        let bucketID = UUID()
         let itemID = UUID()
-        let rel = try await store.copySidecar(from: src, itemID: itemID, subdir: "files")
+        let rel = try await store.copySidecar(from: src, bucketID: bucketID, itemID: itemID, subdir: "files")
 
-        XCTAssertTrue(rel.hasPrefix("files/"))
+        XCTAssertTrue(rel.hasPrefix("\(bucketID.uuidString)/files/"))
         XCTAssertTrue(rel.hasSuffix("\(itemID.uuidString).txt"))
 
         let absolute = store.absoluteURL(forRelative: rel)
@@ -90,9 +91,10 @@ final class BucketStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         try Data([0xDE, 0xAD, 0xBE, 0xEF]).write(to: src)
 
-        let rel = try await store.copySidecar(from: src, itemID: UUID(), subdir: "images", move: true)
+        let bucketID = UUID()
+        let rel = try await store.copySidecar(from: src, bucketID: bucketID, itemID: UUID(), subdir: "images", move: true)
 
-        XCTAssertTrue(rel.hasPrefix("images/"))
+        XCTAssertTrue(rel.hasPrefix("\(bucketID.uuidString)/images/"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: src.path),
                        "Source should be removed after move")
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.absoluteURL(forRelative: rel).path))
@@ -100,12 +102,15 @@ final class BucketStoreTests: XCTestCase {
 
     func testWriteSidecarRawBytes() async throws {
         let store = BucketStore(rootURL: tempRoot)
+        let bucketID = UUID()
         let rel = try await store.writeSidecar(
             Data([1, 2, 3, 4]),
+            bucketID: bucketID,
             itemID: UUID(),
             subdir: "images",
             ext: "png"
         )
+        XCTAssertTrue(rel.hasPrefix("\(bucketID.uuidString)/images/"))
         let absolute = store.absoluteURL(forRelative: rel)
         XCTAssertTrue(FileManager.default.fileExists(atPath: absolute.path))
         XCTAssertEqual(try Data(contentsOf: absolute), Data([1, 2, 3, 4]))
@@ -119,8 +124,9 @@ final class BucketStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         try "x".data(using: .utf8)!.write(to: src)
 
-        let rel1 = try await store.copySidecar(from: src, itemID: UUID(), subdir: "files")
-        let rel2 = try await store.copySidecar(from: src, itemID: UUID(), subdir: "files")
+        let bucketID = UUID()
+        let rel1 = try await store.copySidecar(from: src, bucketID: bucketID, itemID: UUID(), subdir: "files")
+        let rel2 = try await store.copySidecar(from: src, bucketID: bucketID, itemID: UUID(), subdir: "files")
 
         await store.deleteSidecars(relativePaths: [rel1, rel2])
 
@@ -131,16 +137,17 @@ final class BucketStoreTests: XCTestCase {
     func testDeleteSidecarsIgnoresMissing() async throws {
         let store = BucketStore(rootURL: tempRoot)
         // Should not throw
-        await store.deleteSidecars(relativePaths: ["files/nonexistent.txt"])
+        await store.deleteSidecars(relativePaths: ["\(UUID().uuidString)/files/nonexistent.txt"])
     }
 
     // MARK: - Storage size
 
     func testSidecarStorageBytesSumsAcrossSubdirs() async throws {
         let store = BucketStore(rootURL: tempRoot)
-        _ = try await store.writeSidecar(Data(count: 1000), itemID: UUID(), subdir: "files", ext: "bin")
-        _ = try await store.writeSidecar(Data(count: 2000), itemID: UUID(), subdir: "images", ext: "png")
-        _ = try await store.writeSidecar(Data(count: 500), itemID: UUID(), subdir: "favicons", ext: "ico")
+        let bucketID = UUID()
+        _ = try await store.writeSidecar(Data(count: 1000), bucketID: bucketID, itemID: UUID(), subdir: "files", ext: "bin")
+        _ = try await store.writeSidecar(Data(count: 2000), bucketID: bucketID, itemID: UUID(), subdir: "images", ext: "png")
+        _ = try await store.writeSidecar(Data(count: 500), bucketID: bucketID, itemID: UUID(), subdir: "favicons", ext: "ico")
 
         let total = await store.sidecarStorageBytes()
         XCTAssertEqual(total, 3500)

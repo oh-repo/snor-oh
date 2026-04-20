@@ -144,6 +144,10 @@ struct BucketTab: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
+
+            BucketsManagementSection(manager: manager)
+
+            AutoRouteRulesSection(manager: manager)
         }
         .formStyle(.grouped)
     }

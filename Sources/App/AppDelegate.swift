@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let obs = statusBarObserver { NotificationCenter.default.removeObserver(obs) }
         ClipboardMonitor.shared.stop()
         HotkeyRegistrar.shared.unregister()
+        HotkeyRegistrar.shared.unregisterBucketSwitchers()
 
         // Flush any pending debounced bucket write synchronously (bounded wait)
         // so a quit mid-debounce doesn't lose the latest mutation.
@@ -119,6 +120,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let binding = BucketManager.shared.settings.hotkey
         HotkeyRegistrar.shared.registerBucketToggle(binding: binding) { [weak self] in
             self?.bucketWindow?.toggle()
+        }
+
+        // Phase 6: ⌃⌥1…⌃⌥9 switches the active bucket to the Nth visible one.
+        // Handler reads `activeBuckets` live, so no re-register on CRUD.
+        HotkeyRegistrar.shared.registerBucketSwitchers { n in
+            Task { @MainActor in
+                let manager = BucketManager.shared
+                guard let target = BucketManager.resolveBucketSwitcherTarget(
+                    n: n, activeBuckets: manager.activeBuckets
+                ) else { return }
+                manager.setActiveBucket(id: target)
+            }
         }
 
         // Status bar reflects bucket count too

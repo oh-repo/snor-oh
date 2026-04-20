@@ -149,6 +149,20 @@ struct BucketCardView: View {
                 NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
             }
         }
+
+        let destinations = manager.activeBuckets.filter { $0.id != manager.activeBucketID }
+        if !destinations.isEmpty {
+            Menu("Move to") {
+                ForEach(destinations, id: \.id) { b in
+                    Button {
+                        manager.moveItem(item.id, toBucket: b.id)
+                    } label: {
+                        Text(b.emoji.map { "\($0)  \(b.name)" } ?? b.name)
+                    }
+                }
+            }
+        }
+
         Divider()
         Button("Remove") { manager.remove(id: item.id) }
     }
@@ -350,26 +364,3 @@ struct BucketCardView: View {
     }
 }
 
-// MARK: - Color(hex:) helper
-
-extension Color {
-    init?(hex: String) {
-        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.hasPrefix("#") { s.removeFirst() }
-        guard s.count == 6 || s.count == 8,
-              let v = UInt64(s, radix: 16) else { return nil }
-        let r, g, b, a: Double
-        if s.count == 8 {
-            a = Double((v >> 24) & 0xFF) / 255.0
-            r = Double((v >> 16) & 0xFF) / 255.0
-            g = Double((v >> 8) & 0xFF) / 255.0
-            b = Double(v & 0xFF) / 255.0
-        } else {
-            a = 1.0
-            r = Double((v >> 16) & 0xFF) / 255.0
-            g = Double((v >> 8) & 0xFF) / 255.0
-            b = Double(v & 0xFF) / 255.0
-        }
-        self = Color(.sRGB, red: r, green: g, blue: b, opacity: a)
-    }
-}
