@@ -9,7 +9,6 @@ interface PackageRow {
   format: "snoroh" | "animime";
   size_bytes: number;
   frame_counts: Record<string, number>;
-  preview_png: string;
   created_at: string;
 }
 
@@ -123,7 +122,7 @@ function PackageCard({ pkg }: { pkg: PackageRow }) {
   return (
     <div className="group flex flex-col overflow-hidden rounded-xl border border-[color:var(--card-border)] bg-[color:var(--card)] shadow-sm transition hover:-translate-y-0.5 hover:border-[color:var(--accent)]/40 hover:shadow-md">
       <div className="relative aspect-square overflow-hidden bg-[color:var(--bg-subtle)]">
-        <AnimatedPreview base64Png={pkg.preview_png} frames={idleFrames} />
+        <AnimatedPreview previewUrl={`/api/packages/${pkg.id}/preview`} frames={idleFrames} />
         <span className="absolute right-2 top-2 rounded-md bg-[color:var(--bg)]/80 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest opacity-70 backdrop-blur-sm">
           .{pkg.format}
         </span>
@@ -177,7 +176,7 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-function AnimatedPreview({ base64Png, frames }: { base64Png: string; frames: number }) {
+function AnimatedPreview({ previewUrl, frames }: { previewUrl: string; frames: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -227,13 +226,13 @@ function AnimatedPreview({ base64Png, frames }: { base64Png: string; frames: num
       };
       raf = requestAnimationFrame(loop);
     };
-    img.src = `data:image/png;base64,${base64Png}`;
+    img.src = previewUrl;
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
     };
-  }, [base64Png, frames]);
+  }, [previewUrl, frames]);
 
   return (
     <canvas

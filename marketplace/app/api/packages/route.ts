@@ -12,7 +12,7 @@ export async function GET(req: Request) {
 
   let q = supabaseAnon()
     .from("packages")
-    .select("id, name, creator, format, size_bytes, frame_counts, preview_png, created_at")
+    .select("id, name, creator, format, size_bytes, frame_counts, created_at")
     .order("created_at", { ascending: false })
     .limit(limit + 1);
 
