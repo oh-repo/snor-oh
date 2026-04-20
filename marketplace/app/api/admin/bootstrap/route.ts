@@ -107,7 +107,7 @@ async function ensureBucket(): Promise<StepResult> {
     }
     const { error } = await db.storage.createBucket(BUCKET, {
       public: true,
-      fileSizeLimit: 2 * 1024 * 1024,
+      fileSizeLimit: 3 * 1024 * 1024,
       allowedMimeTypes: ["application/json", "application/octet-stream"],
     });
     if (error) return { ok: false, error: error.message };

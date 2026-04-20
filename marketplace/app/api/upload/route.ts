@@ -31,7 +31,7 @@ export async function POST(req: Request) {
 
   const file = form.get("file");
   if (!(file instanceof Blob)) return err("no_file", "Missing file field");
-  if (file.size > MAX_FILE_BYTES) return err("too_large", "File exceeds 2 MiB");
+  if (file.size > MAX_FILE_BYTES) return err("too_large", "File exceeds 3 MiB");
 
   const filename = (form.get("filename") as string | null)?.trim() ?? "";
   const creatorRaw = (form.get("creator") as string | null)?.trim() ?? "";

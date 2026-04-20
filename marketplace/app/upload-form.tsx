@@ -103,7 +103,7 @@ export function UploadForm() {
             <div className="space-y-1">
               <div className="text-sm font-medium">Drop a package here</div>
               <div className="font-mono text-[11px] opacity-50">
-                or click · .snoroh / .animime · max 2 MiB
+                or click · .snoroh / .animime · max 3 MiB
               </div>
             </div>
           )}

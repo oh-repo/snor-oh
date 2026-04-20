@@ -13,7 +13,7 @@ Create a free Supabase project, then:
 2. **Storage** — create a bucket:
    - Name: `packages`
    - Public: **yes**
-   - File size limit: `2 MiB`
+   - File size limit: `3 MiB`
    - Allowed MIME types: `application/json`
 3. Grab `Project URL`, `anon public` key, and `service_role` key from **Project Settings → API**.
 
@@ -69,7 +69,7 @@ Both `.snoroh` and `.animime` use the same JSON schema (see `lib/schema.ts`). Th
 - All 7 statuses present: `initializing`, `searching`, `idle`, `busy`, `service`, `disconnected`, `visiting`.
 - Each sprite is valid base64 PNG, ≤ 1024px per side.
 - Frame count 1–64 per status.
-- Total file ≤ 2 MiB.
+- Total file ≤ 3 MiB.
 
 ## Moderation
 

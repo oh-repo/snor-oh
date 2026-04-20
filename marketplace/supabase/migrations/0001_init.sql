@@ -33,5 +33,5 @@ create policy "packages_public_read"
 --
 --   bucket name: packages
 --   public: true
---   file size limit: 2 MiB
+--   file size limit: 3 MiB
 --   allowed mime types: application/json, application/octet-stream
