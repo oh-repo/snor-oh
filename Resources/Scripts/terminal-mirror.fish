@@ -1,9 +1,16 @@
 # --- snor-oh Terminal Mirror (Fish) ---
 # Add to fish config:  source /path/to/terminal-mirror.fish
+#
+# Presence is event-driven: POST /session-start on source, /session-end on
+# fish_exit. snor-oh verifies PID liveness via kill(0) every 2s.
 
 set -g _TM_URL "http://127.0.0.1:1234"
+set -g _TM_SESSIONS_DIR "$HOME/.snor-oh/sessions"
 
-# --- Detect if a command is Claude Code ---
+function _tm_urlenc
+    string replace -a ' ' '%20' -- $argv[1]
+end
+
 function _tm_is_claude
     set -l first_word (string split ' ' -- $argv[1])[1]
     test "$first_word" = "claude"; and return 0
@@ -12,7 +19,6 @@ function _tm_is_claude
     return 1
 end
 
-# --- Command categorization ---
 function _tm_classify
     set -l cmd "$argv[1]"
     if string match -rq '(^|\s|/)(start|dev|serve|watch|metro|docker-compose|docker compose|up)(\s|$)' -- "$cmd"
@@ -22,26 +28,31 @@ function _tm_classify
     end
 end
 
-# --- Heartbeat (background, every 20s) ---
-function _tm_heartbeat
-    while true
-        curl -s --max-time 2 "$_TM_URL/heartbeat?pid=$fish_pid&cwd="(pwd) >/dev/null 2>&1
-        sleep 20
-    end
-end
-
-# Start heartbeat only once per shell session
-if not set -q _TM_HEARTBEAT_STARTED
-    set -g _TM_HEARTBEAT_STARTED 1
-    _tm_heartbeat &
+function _tm_session_start
+    mkdir -p "$_TM_SESSIONS_DIR"
+    set -l lstart (ps -o lstart= -p $fish_pid | string trim)
+    set -l pwd_now (pwd)
+    printf '{"pid":%d,"cwd":"%s","kind":"shell","started_at":"%s"}\n' \
+        $fish_pid $pwd_now $lstart > "$_TM_SESSIONS_DIR/$fish_pid.json"
+    curl -s --max-time 2 \
+        "$_TM_URL/session-start?pid=$fish_pid&cwd="(_tm_urlenc $pwd_now)"&kind=shell&started_at="(_tm_urlenc $lstart) \
+        >/dev/null 2>&1 &
     disown
 end
 
-# --- Hooks ---
+function _tm_session_end --on-event fish_exit
+    rm -f "$_TM_SESSIONS_DIR/$fish_pid.json" 2>/dev/null
+    curl -s --max-time 1 "$_TM_URL/session-end?pid=$fish_pid" >/dev/null 2>&1
+end
+
+if not set -q _TM_REGISTERED
+    set -g _TM_REGISTERED 1
+    _tm_session_start
+end
+
 function _tm_preexec --on-event fish_preexec
     set -l cmd "$argv[1]"
 
-    # Claude Code has its own hooks — skip entirely
     _tm_is_claude "$cmd"; and return
 
     set -l cmd_type (_tm_classify "$cmd")

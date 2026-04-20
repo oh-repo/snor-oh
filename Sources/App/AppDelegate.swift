@@ -46,6 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         loadSavedPreferences()
         runSetup()
         startHTTPServer()
+        // Populate the session list from pidfiles on disk BEFORE the watchdog
+        // starts — otherwise the first tick would wipe anything that hadn't
+        // checked in yet, defeating the whole re-discovery guarantee.
+        sessionManager.loadExistingSessions()
         startWatchdog()
         startGitPoller()
         if UserDefaults.standard.object(forKey: DefaultsKey.peerDiscoveryEnabled) as? Bool ?? true {
@@ -205,18 +209,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusBarText() {
         guard let button = statusItem?.button else { return }
-        let projects = sessionManager.projects
+        let sessions = sessionManager.sessions
         let bucketCount = BucketManager.shared.activeBuckets.reduce(0) { $0 + $1.items.count }
 
-        if projects.isEmpty && bucketCount == 0 {
+        if sessions.isEmpty && bucketCount == 0 {
             button.attributedTitle = NSAttributedString()
             return
         }
 
-        // Count statuses
+        // Count by per-session uiState — two shells in one folder count as 2,
+        // matching the ×N pill on the project row. Projects are a visual
+        // grouping; sessions are the actual unit of "something is running".
         var counts: [(Status, Int)] = []
         var map: [Status: Int] = [:]
-        for p in projects { map[p.status, default: 0] += 1 }
+        for s in sessions.values { map[s.uiState, default: 0] += 1 }
         // Sort: non-idle first by priority desc, idle last
         let sorted = map.sorted { a, b in
             if a.key == .idle { return false }

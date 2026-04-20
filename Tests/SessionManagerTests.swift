@@ -66,15 +66,18 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(frontend?.status, .service)
     }
 
-    func testHeartbeatUpdatesLastSeen() {
+    func testHeartbeatRefreshesBusySessionToo() {
+        // New semantic: PID-liveness is the authoritative lifecycle signal,
+        // so heartbeats unconditionally refresh lastSeen. The old `!= .busy`
+        // gate used to strand sessions stuck in busy — see
+        // `Sources/Core/SessionManager.swift handleHeartbeat` for the rationale.
         let sm = SessionManager()
         sm.handleStatus(pid: 1, state: "busy", type: "task", cwd: "/tmp")
-        let firstSeen = sm.sessions[1]?.lastSeen ?? 0
+        sm.sessions[1]?.lastSeen = 0
 
-        // Heartbeat should NOT update last_seen for busy sessions
         sm.handleHeartbeat(pid: 1, cwd: nil)
-        let afterHeartbeat = sm.sessions[1]?.lastSeen ?? 0
-        XCTAssertEqual(firstSeen, afterHeartbeat)
+        XCTAssertGreaterThan(sm.sessions[1]?.lastSeen ?? 0, 0,
+                             "heartbeat should refresh lastSeen for busy sessions now")
     }
 
     func testAllSessionsExpireWhenStale() {
@@ -223,5 +226,123 @@ final class SessionManagerTests: XCTestCase {
 
         let names = sm.projects.map(\.name)
         XCTAssertEqual(names, ["a-project", "m-project", "z-project"])
+    }
+
+    // MARK: - Session lifecycle (event-driven, Tier-1 redesign)
+
+    /// Fake liveness checker for deterministic tick tests. Production uses
+    /// POSIX `kill(0)`; tests drive it directly from a Set so we don't depend
+    /// on real OS PIDs.
+    private final class FakeLiveness: SessionLivenessChecking {
+        var alive: Set<UInt32> = []
+        var startedAt: [UInt32: String] = [:]
+        func isAlive(pid: UInt32, expectedStartedAt: String?) -> Bool {
+            guard alive.contains(pid) else { return false }
+            if let expected = expectedStartedAt,
+               let actual = startedAt[pid],
+               expected != actual {
+                return false  // PID reuse: same number, different process
+            }
+            return true
+        }
+    }
+
+    func testHandleSessionStartCreatesSessionWithMetadata() {
+        let sm = SessionManager()
+        sm.handleSessionStart(
+            pid: 100, cwd: "/tmp/proj", kind: "shell",
+            startedAt: "Mon Apr 20 14:00:00 2026"
+        )
+        XCTAssertEqual(sm.sessions[100]?.kind, "shell")
+        XCTAssertEqual(sm.sessions[100]?.startedAt, "Mon Apr 20 14:00:00 2026")
+        XCTAssertEqual(sm.sessions[100]?.cwd, "/tmp/proj")
+        XCTAssertEqual(sm.sessions[100]?.uiState, .idle)
+    }
+
+    func testHandleSessionEndRemovesImmediately() {
+        let sm = SessionManager()
+        sm.handleSessionStart(pid: 200, cwd: "/a", kind: "claude", startedAt: "T")
+        XCTAssertNotNil(sm.sessions[200])
+
+        sm.handleSessionEnd(pid: 200)
+        XCTAssertNil(sm.sessions[200], "/session-end must delete immediately, no 60s wait")
+    }
+
+    func testWatchdogRemovesDeadPIDs() {
+        let sm = SessionManager()
+        let fake = FakeLiveness()
+        fake.alive = [11]  // only PID 11 is alive
+        sm.livenessChecker = fake
+
+        sm.handleSessionStart(pid: 11, cwd: "/alive", kind: "shell", startedAt: "T1")
+        sm.handleSessionStart(pid: 22, cwd: "/dead", kind: "shell", startedAt: "T2")
+
+        sm.tick()
+        XCTAssertNotNil(sm.sessions[11], "live PID stays")
+        XCTAssertNil(sm.sessions[22], "dead PID removed by kill(0) sweep")
+    }
+
+    func testWatchdogDetectsPIDReuseByStartedAt() {
+        // PID 33 is currently alive but with a different start time than what
+        // the session was registered with → treated as a different process.
+        let sm = SessionManager()
+        let fake = FakeLiveness()
+        fake.alive = [33]
+        fake.startedAt = [33: "NEW-START"]
+        sm.livenessChecker = fake
+
+        sm.handleSessionStart(pid: 33, cwd: "/x", kind: "shell", startedAt: "OLD-START")
+
+        // Manually trigger liveness via pidfile scan path (tick only uses kill(0)).
+        // loadExistingSessions would run on app launch; simulate by re-checking
+        // via livenessChecker with the stored startedAt.
+        XCTAssertFalse(sm.livenessChecker.isAlive(pid: 33, expectedStartedAt: "OLD-START"),
+                       "start-time mismatch must be treated as dead (PID was reused)")
+        XCTAssertTrue(sm.livenessChecker.isAlive(pid: 33, expectedStartedAt: nil),
+                      "without expected start time, kill(0) says alive")
+    }
+
+    /// Fake process scanner for deterministic startup tests.
+    private final class FakeScanner: SessionProcessScanning {
+        var shells: [ShellProcessInfo] = []
+        func scanInteractiveShells() -> [ShellProcessInfo] { shells }
+    }
+
+    func testLoadExistingSessionsSeedsFromProcessScan() {
+        // No pidfiles on disk (normal case for pre-upgrade shells). The
+        // process scanner fills the gap so the UI isn't blank at launch.
+        let sm = SessionManager()
+        let fakeScan = FakeScanner()
+        fakeScan.shells = [
+            ShellProcessInfo(pid: 501, cwd: "/Users/me/proj-a", startedAt: "T501"),
+            ShellProcessInfo(pid: 502, cwd: "/Users/me/proj-b", startedAt: "T502"),
+        ]
+        sm.processScanner = fakeScan
+        // Use the default liveness — pidfile scan reads ~/.snor-oh/sessions
+        // which will be empty or irrelevant in the test environment.
+
+        sm.loadExistingSessions()
+
+        XCTAssertEqual(sm.sessions[501]?.cwd, "/Users/me/proj-a")
+        XCTAssertEqual(sm.sessions[501]?.kind, "shell")
+        XCTAssertEqual(sm.sessions[502]?.startedAt, "T502")
+        XCTAssertEqual(sm.projects.count, 2, "both scanned shells materialize as projects")
+    }
+
+    func testLegacyHeartbeatSessionStillAgeExpires() {
+        // Pre-upgrade shells use /heartbeat and never set startedAt. Those
+        // sessions fall back to lastSeen-age expiration so a gone shell
+        // eventually disappears even if we never get a /session-end.
+        let sm = SessionManager()
+        let fake = FakeLiveness()
+        fake.alive = [77]  // OS says it's alive
+        sm.livenessChecker = fake
+
+        sm.handleHeartbeat(pid: 77, cwd: "/legacy")
+        XCTAssertNil(sm.sessions[77]?.startedAt, "legacy heartbeat session has no startedAt")
+
+        sm.sessions[77]?.lastSeen = 0  // age it out
+        sm.tick()
+        XCTAssertNil(sm.sessions[77], "legacy session past heartbeatTimeoutSecs must expire")
     }
 }

@@ -367,6 +367,21 @@ struct SnorOhPanelView: View {
 
                 Spacer()
 
+                // Show session-count pill when a single folder hosts multiple
+                // shells/Claude processes — otherwise it collapses to the
+                // original one-row-per-project layout (no visual noise).
+                if project.sessions.count > 1 {
+                    Text("×\(project.sessions.count)")
+                        .font(.system(size: size.metaFont, weight: .semibold))
+                        .foregroundStyle(isDark ? .white.opacity(0.55) : .black.opacity(0.5))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule()
+                                .fill(isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06))
+                        )
+                }
+
                 if project.status != .idle {
                     Text(project.status.displayLabel)
                         .font(.system(size: size.metaFont, weight: .medium))

@@ -8,6 +8,19 @@ enum ClaudeHooks {
     private static let busyCmd = #"curl -s --max-time 1 "http://127.0.0.1:1234/status?pid=$PPID&state=busy&type=task&cwd=$PWD" > /dev/null 2>&1 || true"#
     private static let idleCmd = #"curl -s --max-time 1 "http://127.0.0.1:1234/status?pid=$PPID&state=idle&cwd=$PWD" > /dev/null 2>&1 || true"#
 
+    /// Claude SessionStart: register with snor-oh and drop a pidfile. `lstart`
+    /// output is URL-encoded inline (spaces → %20, ':' left literal — curl
+    /// accepts both). A single line so the hook schema stays simple.
+    private static let sessionStartCmd = #"""
+mkdir -p ~/.snor-oh/sessions && LSTART=$(ps -o lstart= -p $PPID | sed 's/^ *//;s/ *$//') && printf '{"pid":%d,"cwd":"%s","kind":"claude","started_at":"%s"}\n' "$PPID" "$PWD" "$LSTART" > ~/.snor-oh/sessions/$PPID.json && curl -s --max-time 1 "http://127.0.0.1:1234/session-start?pid=$PPID&cwd=$(printf %s "$PWD" | sed 's/ /%20/g')&kind=claude&started_at=$(printf %s "$LSTART" | sed 's/ /%20/g')" > /dev/null 2>&1 || true
+"""#
+
+    /// Claude SessionEnd: delete pidfile + notify server. Paired with the
+    /// Watchdog's `kill(0)` sweep so force-quit skips still get cleaned up.
+    private static let sessionEndCmd = #"""
+rm -f ~/.snor-oh/sessions/$PPID.json; curl -s --max-time 1 "http://127.0.0.1:1234/session-end?pid=$PPID" > /dev/null 2>&1 || true
+"""#
+
     /// Install Claude Code hooks if not already present.
     static func setup() {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -34,8 +47,8 @@ enum ClaudeHooks {
         added += addHook(to: &hooks, event: "PreToolUse", command: busyCmd)
         added += addHook(to: &hooks, event: "UserPromptSubmit", command: busyCmd)
         added += addHook(to: &hooks, event: "Stop", command: idleCmd)
-        added += addHook(to: &hooks, event: "SessionStart", command: idleCmd)
-        added += addHook(to: &hooks, event: "SessionEnd", command: idleCmd)
+        added += addHook(to: &hooks, event: "SessionStart", command: sessionStartCmd)
+        added += addHook(to: &hooks, event: "SessionEnd", command: sessionEndCmd)
 
         guard added > 0 else {
             print("[setup] all claude hooks already present")
@@ -88,9 +101,12 @@ enum ClaudeHooks {
                         continue
                     }
 
-                    // Update outdated commands
+                    // Update outdated /status commands only. Lifecycle commands
+                    // (/session-start, /session-end) use a different schema
+                    // and must not be rewritten back to /status form.
                     var newCmd = cmd
-                    if cmd.contains("pid=0") || !cmd.contains("cwd=") {
+                    let isStatusStyle = cmd.contains("/status?")
+                    if isStatusStyle && (cmd.contains("pid=0") || !cmd.contains("cwd=")) {
                         newCmd = cmd.contains("state=busy") ? busyCmd : idleCmd
                     }
 

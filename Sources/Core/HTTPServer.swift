@@ -90,6 +90,10 @@ private final class HTTPHandler: ChannelInboundHandler {
             (status, responseBody) = handleStatus(query: query)
         case "/heartbeat":
             (status, responseBody) = handleHeartbeat(query: query)
+        case "/session-start":
+            (status, responseBody) = handleSessionStart(query: query)
+        case "/session-end":
+            (status, responseBody) = handleSessionEnd(query: query)
         case "/visit":
             (status, responseBody) = handleVisit(body: body)
         case "/visit-end":
@@ -131,6 +135,38 @@ private final class HTTPHandler: ChannelInboundHandler {
 
         DispatchQueue.main.async {
             self.sessionManager.handleHeartbeat(pid: pid, cwd: cwd)
+        }
+        return (.ok, "ok")
+    }
+
+    /// GET `/session-start?pid=X&cwd=...&kind=shell|claude&started_at=...`
+    /// Registers a session explicitly. Sent once by shell rc / Claude
+    /// SessionStart hook. Query-string form (not POST body) so shell
+    /// scripts can emit it with a plain `curl`.
+    private func handleSessionStart(query: [String: String]) -> (HTTPResponseStatus, String) {
+        guard let pidStr = query["pid"], let pid = UInt32(pidStr) else {
+            return (.badRequest, "missing pid")
+        }
+        let cwd = query["cwd"]?.removingPercentEncoding
+        let kind = query["kind"]?.removingPercentEncoding
+        let startedAt = query["started_at"]?.removingPercentEncoding
+
+        DispatchQueue.main.async {
+            self.sessionManager.handleSessionStart(
+                pid: pid, cwd: cwd, kind: kind, startedAt: startedAt
+            )
+        }
+        return (.ok, "ok")
+    }
+
+    /// GET `/session-end?pid=X` — deletes the session immediately. Sent by
+    /// shell EXIT trap / Claude SessionEnd hook. Missing sessions are a no-op.
+    private func handleSessionEnd(query: [String: String]) -> (HTTPResponseStatus, String) {
+        guard let pidStr = query["pid"], let pid = UInt32(pidStr) else {
+            return (.badRequest, "missing pid")
+        }
+        DispatchQueue.main.async {
+            self.sessionManager.handleSessionEnd(pid: pid)
         }
         return (.ok, "ok")
     }

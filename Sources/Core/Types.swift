@@ -56,6 +56,16 @@ struct Session {
     var serviceSince: UInt64 = 0     // When service state started (0 = not in service)
     var busySince: UInt64 = 0        // When busy state started (0 = not busy)
     var cwd: String? = nil           // Working directory for project identification
+
+    /// `ps -o lstart=` string captured at session-start, used to detect macOS
+    /// PID reuse. `nil` for legacy sessions created via `/heartbeat` before
+    /// `/session-start` existed — those fall back to plain `kill(0)` checks.
+    var startedAt: String? = nil
+
+    /// "shell" or "claude". Source of the session registration — lets the UI
+    /// eventually distinguish "terminal open" from "claude running". Optional
+    /// so legacy heartbeat-only sessions don't require a reshuffle.
+    var kind: String? = nil
 }
 
 // MARK: - Peer / Visitor
@@ -151,6 +161,26 @@ struct VisitEndPayload: Codable {
         case instanceName = "instance_name"
         case nickname
     }
+}
+
+// MARK: - Session Lifecycle Payloads
+
+struct SessionStartPayload: Codable {
+    let pid: UInt32
+    let cwd: String
+    let kind: String          // "shell" | "claude"
+    let startedAt: String?    // `ps -o lstart=` string; optional for resilience
+
+    enum CodingKeys: String, CodingKey {
+        case pid
+        case cwd
+        case kind
+        case startedAt = "started_at"
+    }
+}
+
+struct SessionEndPayload: Codable {
+    let pid: UInt32
 }
 
 // MARK: - Pet Status (MCP Response)

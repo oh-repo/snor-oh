@@ -58,9 +58,23 @@ final class SessionManager {
 
     // MARK: Constants
 
-    static let heartbeatTimeoutSecs: UInt64 = 60
+    /// Legacy fallback timeout — used only for sessions that were ever tracked
+    /// without a pidfile (e.g. a pre-upgrade shell still running its old
+    /// heartbeat loop). New sessions are pruned by PID liveness, not age.
+    static let heartbeatTimeoutSecs: UInt64 = 600
     static let serviceDisplaySecs: UInt64 = 2
     static let idleToSleepSecs: UInt64 = 120
+
+    // MARK: - Liveness
+
+    /// Injectable for tests. Production uses POSIX `kill(0)` + `ps -o lstart=`.
+    var livenessChecker: SessionLivenessChecking = SessionLiveness()
+
+    /// Injectable for tests. Production scans running shells via `ps` + `lsof`.
+    /// Used only at `loadExistingSessions()` time as a fallback for terminals
+    /// that pre-date the event-driven registration path (no pidfile on disk).
+    var processScanner: SessionProcessScanning = SessionProcessScanner()
+
     // MARK: - Status Handling
 
     func handleStatus(pid: UInt32, state: String, type: String?, cwd: String?) {
@@ -113,13 +127,86 @@ final class SessionManager {
         let now = nowSecs()
         var session = sessions[pid] ?? Session(uiState: .idle, lastSeen: now)
 
-        // Heartbeats only refresh last_seen for non-busy sessions
-        if session.uiState != .busy {
-            session.lastSeen = now
-        }
+        // PID-liveness is the authoritative lifecycle signal, so heartbeats
+        // refresh `lastSeen` unconditionally — no more `!= .busy` gate that
+        // used to strand sessions stuck in busy after a missed idle event.
+        session.lastSeen = now
         if let cwd { session.cwd = cwd }
 
         sessions[pid] = session
+        recomputeProjects()
+        emitIfChanged()
+    }
+
+    /// Registers a new session from `/session-start`. Called by shell rc and
+    /// Claude's `SessionStart` hook — replaces the implicit "heartbeat created
+    /// the session" shortcut. Carries `startedAt` so PID reuse is detectable.
+    func handleSessionStart(pid: UInt32, cwd: String?, kind: String?, startedAt: String?) {
+        let now = nowSecs()
+        var session = sessions[pid] ?? Session(uiState: .idle, lastSeen: now)
+        session.lastSeen = now
+        if let cwd { session.cwd = cwd }
+        session.kind = kind
+        session.startedAt = startedAt
+        if session.uiState == .disconnected {
+            session.uiState = .idle
+        }
+        sessions[pid] = session
+        recomputeProjects()
+        emitIfChanged()
+    }
+
+    /// Removes a session at the producer's explicit request — shell EXIT trap,
+    /// Claude `SessionEnd` hook. Watchdog's PID-liveness sweep is the safety
+    /// net for anything that skipped this path (SIGKILL, force-quit).
+    func handleSessionEnd(pid: UInt32) {
+        guard sessions[pid] != nil else { return }
+        sessions.removeValue(forKey: pid)
+        recomputeProjects()
+        emitIfChanged()
+    }
+
+    /// Seeds `sessions` at app launch so the UI shows already-open
+    /// terminals/Claude sessions without waiting for the first event.
+    ///
+    /// Two-pass discovery:
+    ///   1. Pidfile scan — authoritative when present. Carries kind +
+    ///      started_at metadata so PID reuse is detectable.
+    ///   2. Process scan (shells only) — fallback for terminals that
+    ///      pre-date the event-driven `/session-start` flow (no pidfile).
+    ///      Deduped against pass 1 by PID.
+    ///
+    /// Called from `AppDelegate.applicationDidFinishLaunching` AFTER the HTTP
+    /// server binds but BEFORE the watchdog starts — otherwise the first tick
+    /// could race the scan.
+    func loadExistingSessions() {
+        let alive = SessionPidfileStore.pruneStale(using: livenessChecker)
+        let now = nowSecs()
+        for rec in alive where sessions[rec.pid] == nil {
+            sessions[rec.pid] = Session(
+                busyType: "",
+                uiState: .idle,
+                lastSeen: now,
+                cwd: rec.cwd,
+                startedAt: rec.startedAt,
+                kind: rec.kind
+            )
+        }
+
+        // Fallback scan: pick up shells that never registered via /session-start
+        // (pre-upgrade terminals). Skip if already tracked via pidfile.
+        for shell in processScanner.scanInteractiveShells()
+        where sessions[shell.pid] == nil {
+            sessions[shell.pid] = Session(
+                busyType: "",
+                uiState: .idle,
+                lastSeen: now,
+                cwd: shell.cwd,
+                startedAt: shell.startedAt,
+                kind: "shell"
+            )
+        }
+
         recomputeProjects()
         emitIfChanged()
     }
@@ -140,6 +227,7 @@ final class SessionManager {
     }
 
     private var lastProjectCount: Int = 0
+    private var lastSessionCount: Int = 0
 
     func emitIfChanged() {
         let newUI = resolveUIState()
@@ -165,10 +253,19 @@ final class SessionManager {
             }
         }
 
-        // Also detect project count changes (new session added/removed)
+        // Detect project-count changes (new cwd appeared/gone).
         let projectCount = projects.count
         if projectCount != lastProjectCount {
             lastProjectCount = projectCount
+            changed = true
+        }
+
+        // Detect session-count changes — a 2nd shell opened in an existing
+        // folder doesn't bump `projectCount` but should still re-render the
+        // ×N pill and the status-bar breakdown.
+        let sessionCount = sessions.count
+        if sessionCount != lastSessionCount {
+            lastSessionCount = sessionCount
             changed = true
         }
 
@@ -197,15 +294,27 @@ final class SessionManager {
             }
         }
 
-        // 2. Stale session cleanup (guard against clock skew with underflow check)
+        // 2. Dead-PID cleanup. `kill(pid, 0)` is the authoritative liveness
+        //    signal — instant and side-effect free. Start-time comparison is
+        //    skipped here (too expensive for a 2s tick) and handled at scan
+        //    time. Legacy sessions without pidfiles are additionally aged out
+        //    by `heartbeatTimeoutSecs` so a pre-upgrade shell that somehow
+        //    stopped heartbeating doesn't linger forever.
         var stale: [UInt32] = []
         for (pid, session) in sessions {
-            if session.lastSeen <= now && now - session.lastSeen >= Self.heartbeatTimeoutSecs {
+            if !livenessChecker.isAlive(pid: pid, expectedStartedAt: nil) {
+                stale.append(pid)
+                continue
+            }
+            if session.startedAt == nil,
+               session.lastSeen <= now,
+               now - session.lastSeen >= Self.heartbeatTimeoutSecs {
                 stale.append(pid)
             }
         }
         for pid in stale {
             sessions.removeValue(forKey: pid)
+            SessionPidfileStore.delete(pid: pid)
         }
 
         // 3. Visitor expiration (guard against clock skew)
