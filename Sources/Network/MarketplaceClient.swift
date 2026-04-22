@@ -120,3 +120,82 @@ enum MarketplaceClient {
         )
     }
 }
+
+extension MarketplaceClient {
+    struct PackageMeta: Decodable, Equatable {
+        let id: String
+        let name: String
+        let creator: String?
+        let format: String
+        let sizeBytes: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, creator, format
+            case sizeBytes = "size_bytes"
+        }
+    }
+
+    static func previewURL(id: String, baseURL: String) -> URL? {
+        guard isValidID(id) else { return nil }
+        guard let comps = baseComponents(baseURL) else { return nil }
+        var c = comps
+        c.path = "/api/packages/\(id)/preview"
+        return c.url
+    }
+
+    static func fetchMeta(id: String, baseURL: String) async throws -> PackageMeta {
+        guard isValidID(id) else { throw UploadError.invalidURL }
+        guard var comps = baseComponents(baseURL) else {
+            throw UploadError.invalidURL
+        }
+        comps.path = "/api/packages/\(id)"
+        guard let url = comps.url else { throw UploadError.invalidURL }
+
+        let (data, resp): (Data, URLResponse)
+        do {
+            (data, resp) = try await URLSession.shared.data(from: url)
+        } catch {
+            throw UploadError.network(error)
+        }
+        guard let http = resp as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            throw UploadError.invalidResponse
+        }
+        return try JSONDecoder().decode(PackageMeta.self, from: data)
+    }
+
+    static func fetchBundle(id: String, baseURL: String) async throws -> Data {
+        guard isValidID(id) else { throw UploadError.invalidURL }
+        guard var comps = baseComponents(baseURL) else {
+            throw UploadError.invalidURL
+        }
+        comps.path = "/api/packages/\(id)/download"
+        guard let url = comps.url else { throw UploadError.invalidURL }
+
+        let (data, resp): (Data, URLResponse)
+        do {
+            (data, resp) = try await URLSession.shared.data(from: url)
+        } catch {
+            throw UploadError.network(error)
+        }
+        guard let http = resp as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            throw UploadError.invalidResponse
+        }
+        return data
+    }
+
+    private static func isValidID(_ id: String) -> Bool {
+        guard !id.isEmpty, id.count <= 64 else { return false }
+        return id.allSatisfy { ($0.isASCII && ($0.isLetter || $0.isNumber)) || $0 == "-" || $0 == "_" }
+    }
+
+    private static func baseComponents(_ baseURL: String) -> URLComponents? {
+        let trimmed = baseURL
+            .trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let comps = URLComponents(string: trimmed),
+              comps.scheme != nil else { return nil }
+        return comps
+    }
+}

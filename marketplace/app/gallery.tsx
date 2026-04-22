@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PkgFormat } from "@/lib/deeplink";
+import { buildInstallUrl } from "@/lib/deeplink";
+import { InstallFallback } from "./install-fallback";
 
 interface PackageRow {
   id: string;
   name: string;
   creator: string | null;
-  format: "snoroh" | "animime";
+  format: PkgFormat;
   size_bytes: number;
   frame_counts: Record<string, number>;
   created_at: string;
@@ -116,7 +119,6 @@ export function Gallery() {
 
 function PackageCard({ pkg }: { pkg: PackageRow }) {
   const idleFrames = pkg.frame_counts.idle ?? 1;
-  const dateLabel = timeAgo(pkg.created_at);
   const sizeKb = Math.round(pkg.size_bytes / 1024);
 
   return (
@@ -135,16 +137,7 @@ function PackageCard({ pkg }: { pkg: PackageRow }) {
           <span className="truncate font-mono">{pkg.creator ?? "anonymous"}</span>
           <span className="font-mono text-[10px]">{sizeKb} KB</span>
         </div>
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <span className="font-mono text-[10px] opacity-50">{dateLabel}</span>
-          <a
-            href={`/api/packages/${pkg.id}/download`}
-            className="rounded-md border border-[color:var(--border)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest transition hover:border-[color:var(--accent)] hover:bg-[color:var(--accent)] hover:text-[color:var(--accent-fg)]"
-            download
-          >
-            download
-          </a>
-        </div>
+        <CardActions pkg={pkg} />
       </div>
     </div>
   );
@@ -174,6 +167,82 @@ function timeAgo(iso: string): string {
   const d = Math.floor(h / 24);
   if (d < 30) return `${d}d ago`;
   return new Date(iso).toLocaleDateString();
+}
+
+function CardActions({ pkg }: { pkg: PackageRow }) {
+  const [fallback, setFallback] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const cancelTimer = useCallback(() => {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") cancelTimer();
+    };
+    const onHide = () => cancelTimer();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      cancelTimer();
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onHide);
+    };
+  }, [cancelTimer]);
+
+  const handleInstall = () => {
+    cancelTimer();
+    setFallback(false);
+    const url = buildInstallUrl(pkg.format, pkg.id);
+    const a = document.createElement("a");
+    a.href = url;
+    a.rel = "noreferrer";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    timerRef.current = window.setTimeout(() => {
+      if (document.visibilityState === "visible") setFallback(true);
+    }, 1500);
+  };
+
+  const handleClose = useCallback(() => setFallback(false), []);
+  const dateLabel = timeAgo(pkg.created_at);
+
+  return (
+    <>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="font-mono text-[10px] opacity-50">{dateLabel}</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleInstall}
+            className="rounded-md border border-[color:var(--accent)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest transition hover:bg-[color:var(--accent)] hover:text-[color:var(--accent-fg)]"
+            aria-label={`Install ${pkg.name}`}
+          >
+            install
+          </button>
+          <a
+            href={`/api/packages/${pkg.id}/download`}
+            download
+            className="rounded-md border border-[color:var(--border)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest transition hover:border-[color:var(--accent)]"
+          >
+            download
+          </a>
+        </div>
+      </div>
+      <InstallFallback
+        open={fallback}
+        format={pkg.format}
+        packageId={pkg.id}
+        onClose={handleClose}
+      />
+    </>
+  );
 }
 
 function AnimatedPreview({ previewUrl, frames }: { previewUrl: string; frames: number }) {
