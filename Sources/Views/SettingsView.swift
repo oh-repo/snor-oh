@@ -269,6 +269,8 @@ struct GeneralTab: View {
     @AppStorage(DefaultsKey.peerDiscoveryEnabled) private var peerDiscoveryEnabled = true
     @AppStorage(DefaultsKey.marketplaceURL) private var marketplaceURL = DefaultsDefault.marketplaceURL
     @AppStorage(DefaultsKey.creatorName) private var creatorName = ""
+    @AppStorage(DefaultsKey.awayDigestEnabled) private var awayDigestEnabled: Bool = true
+    @AppStorage(DefaultsKey.awayDigestThresholdMins) private var awayDigestThresholdMins: Int = 10
     @State private var autoStartEnabled = false
     @State private var autoStartError: String?
     @State private var shellHookConfigured = false
@@ -324,6 +326,29 @@ struct GeneralTab: View {
 
                 Toggle("Peer Discovery", isOn: $peerDiscoveryEnabled)
                     .help("Advertise on the local network and discover other snor-oh instances for visiting.")
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Away digest", isOn: $awayDigestEnabled)
+                    Text("Summarize what happened in each project while you were away. Hover a project row to read the digest; a bubble appears when you return.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if awayDigestEnabled {
+                        HStack {
+                            Text("Idle threshold")
+                            Slider(value: Binding(
+                                get: { Double(awayDigestThresholdMins) },
+                                set: { awayDigestThresholdMins = Int($0) }
+                            ), in: 3...60, step: 1)
+                            Text("\(awayDigestThresholdMins) min")
+                                .monospacedDigit()
+                                .frame(width: 56, alignment: .trailing)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
             }
 
             Section("Marketplace") {
@@ -398,6 +423,16 @@ struct GeneralTab: View {
         .onAppear {
             autoStartEnabled = SMAppService.mainApp.status == .enabled
             refreshMCPStatus()
+        }
+        .onChange(of: awayDigestEnabled) { _, new in
+            (NSApp.delegate as? AppDelegate)?.applyAwayDigestSettings(
+                enabled: new, thresholdMins: awayDigestThresholdMins
+            )
+        }
+        .onChange(of: awayDigestThresholdMins) { _, new in
+            (NSApp.delegate as? AppDelegate)?.applyAwayDigestSettings(
+                enabled: awayDigestEnabled, thresholdMins: new
+            )
         }
         .alert("Auto-Start Failed", isPresented: .init(
             get: { autoStartError != nil },
