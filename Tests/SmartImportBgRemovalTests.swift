@@ -7,8 +7,12 @@ import CoreGraphics
 ///
 /// Fixture: 40x40 RGBA image. Gray (128,128,128) background everywhere.
 /// A 6x6 block in the interior is pure red (255,0,0).
-/// A 1-px ring around the red block is a 50/50 blend of red and bg —
-/// (192, 64, 64) — simulating the anti-aliased outline of a sprite.
+/// A 1-px ring around the red block is (160,96,96) — a 25%-red / 75%-bg
+/// blend that simulates the subtle anti-aliased bleed around a sprite's
+/// silhouette. Its RGB-distance from bg is ~55.4, which is squarely inside
+/// the [inner=25, outer=90] transition band, exercising the decontamination
+/// path. (A 50/50 blend would be past the outer threshold — treated as
+/// fully sprite, no decontamination needed.)
 final class SmartImportBgRemovalTests: XCTestCase {
 
     private struct Fixture {
@@ -50,10 +54,10 @@ final class SmartImportBgRemovalTests: XCTestCase {
             }
         }
 
-        // Edge ring: 1-px frame around the red, 50/50 blend of (255,0,0)
-        // and (128,128,128) = (192, 64, 64).
-        for x in 16..<24 { put(x, 16, 192, 64, 64); put(x, 23, 192, 64, 64) }
-        for y in 17..<23 { put(16, y, 192, 64, 64); put(23, y, 192, 64, 64) }
+        // Edge ring: 1-px frame, 25%-red / 75%-bg blend = (160, 96, 96).
+        // Distance to bg ≈ 55.4, inside the [25, 90] transition band.
+        for x in 16..<24 { put(x, 16, 160, 96, 96); put(x, 23, 160, 96, 96) }
+        for y in 17..<23 { put(16, y, 160, 96, 96); put(23, y, 160, 96, 96) }
 
         let img = ctx.makeImage()!
         return Fixture(
@@ -90,11 +94,12 @@ final class SmartImportBgRemovalTests: XCTestCase {
         XCTAssertLessThanOrEqual(b, 5)
     }
 
-    /// The edge pixel is the gray/red blend that the old hard threshold
-    /// kept fully opaque (producing the halo). The new code must:
+    /// The edge pixel (160, 96, 96) is a 25%-red / 75%-bg blend — exactly
+    /// the kind of pixel that produces the halo. The new code must:
     ///   (a) give it partial alpha (0 < a < 255), and
-    ///   (b) decontaminate its RGB so the unpremultiplied color reads as
-    ///       RED, not gray and not the original 50/50 blend.
+    ///   (b) decontaminate its straight RGB so it swings toward red and
+    ///       away from gray. We check direction rather than exact recovery
+    ///       (perfect recovery would require knowing the true blend alpha).
     func testEdgeRingIsDecontaminated() throws {
         let f = makeFixture()
         let (ctx, _) = SmartImport.removeBackground(from: f.image, bgColor: f.bgColor)!
@@ -109,8 +114,8 @@ final class SmartImportBgRemovalTests: XCTestCase {
         let straightG = Double(g) / aF
         let straightB = Double(b) / aF
 
-        XCTAssertGreaterThan(straightR, 200, "decontaminated R should swing toward pure red, not stay at 192")
-        XCTAssertLessThan(straightG, 60, "decontaminated G should drop below the 64 blend value")
-        XCTAssertLessThan(straightB, 60, "decontaminated B should drop below the 64 blend value")
+        XCTAssertGreaterThan(straightR, 160, "decontaminated R should move above the 160 blend value toward pure red")
+        XCTAssertLessThan(straightG, 96, "decontaminated G should drop below the 96 blend value toward 0")
+        XCTAssertLessThan(straightB, 96, "decontaminated B should drop below the 96 blend value toward 0")
     }
 }
