@@ -53,6 +53,12 @@ enum DefaultsKey {
     /// `bucketWindowHeight` (which tracks the *current* frame height, and
     /// temporarily drops to the collapsed value while hidden).
     static let bucketExpandedHeight = "bucketExpandedHeight"
+
+    // MARK: - Away Digest feature (A9)
+    /// Whether the away-digest summary is enabled. Default: true.
+    static let awayDigestEnabled = "awayDigestEnabled"
+    /// Minimum idle minutes before an away digest is generated. Default: 10. Valid range: 3…60.
+    static let awayDigestThresholdMins = "awayDigestThresholdMins"
 }
 
 enum DefaultsDefault {
