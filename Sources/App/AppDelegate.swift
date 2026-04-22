@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let sessionManager = SessionManager()
     private var watchdog: Watchdog?
+    private(set) var userIdleTracker: UserIdleTracker!
+    private(set) var awayDigestCollector: AwayDigestCollector!
     private var httpServer: HTTPServer?
     private var gitPoller: GitStatusPoller?
     private var peerDiscovery: PeerDiscovery?
@@ -63,6 +65,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // checked in yet, defeating the whole re-discovery guarantee.
         sessionManager.loadExistingSessions()
         startWatchdog()
+
+        let defaults = UserDefaults.standard
+        let enabled = defaults.object(forKey: DefaultsKey.awayDigestEnabled) as? Bool ?? true
+        let thresholdMins = (defaults.object(forKey: DefaultsKey.awayDigestThresholdMins) as? Int) ?? 10
+        let clampedMins = max(3, min(60, thresholdMins))
+
+        userIdleTracker = UserIdleTracker()
+        userIdleTracker.enabled = enabled
+        userIdleTracker.thresholdSecs = TimeInterval(clampedMins * 60)
+        watchdog?.userIdleTracker = userIdleTracker
+
+        awayDigestCollector = AwayDigestCollector(sessionManager: sessionManager)
+        awayDigestCollector.enabled = enabled
+
         startGitPoller()
         if UserDefaults.standard.object(forKey: DefaultsKey.peerDiscoveryEnabled) as? Bool ?? true {
             startPeerDiscovery()
@@ -289,6 +305,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startWatchdog() {
         watchdog = Watchdog(sessionManager: sessionManager)
         watchdog?.start()
+    }
+
+    // MARK: - Away Digest
+
+    func applyAwayDigestSettings(enabled: Bool, thresholdMins: Int) {
+        let clampedMins = max(3, min(60, thresholdMins))
+        userIdleTracker?.enabled = enabled
+        userIdleTracker?.thresholdSecs = TimeInterval(clampedMins * 60)
+        awayDigestCollector?.enabled = enabled
     }
 
     // MARK: - Menu Bar
