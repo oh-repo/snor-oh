@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import SwiftUI
 
 @MainActor
@@ -87,6 +88,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         createPanel()
         startBubbleObserving()
         startBucketFeature()
+
+        // Register handler for snoroh:// deep links (e.g. snoroh://install?id=…)
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleURLEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
 
         // Transition from initializing → searching after a short delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -699,5 +708,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.mcpReactWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(durationMs) / 1000.0, execute: work)
         }
+    }
+
+    // MARK: - Deep Link Handler
+
+    /// Handles `snoroh://` URLs delivered by the system via Apple Events
+    /// (e.g. `snoroh://install?id=<pet-id>`). Delegates validation and
+    /// fetching to `InstallCoordinator` and ensures the panel is visible.
+    @objc func handleURLEvent(
+        _ event: NSAppleEventDescriptor,
+        withReplyEvent: NSAppleEventDescriptor
+    ) {
+        guard
+            let str = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+            str.count < 2048,
+            let url = URL(string: str)
+        else { return }
+
+        InstallCoordinator.shared.handle(url: url)
+        showPanel()
     }
 }

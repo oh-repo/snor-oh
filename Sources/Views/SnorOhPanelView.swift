@@ -97,6 +97,8 @@ struct SnorOhPanelView: View {
     @State private var messageText = ""
     @State private var mascotDropTargeted = false
 
+    @ObservedObject private var installer = InstallCoordinator.shared
+
     @AppStorage(DefaultsKey.panelSize) private var sizeRaw = "regular"
     @AppStorage(DefaultsKey.sidebarCollapsed) private var collapsed = false
     @AppStorage(DefaultsKey.theme) private var theme = "dark"
@@ -156,6 +158,12 @@ struct SnorOhPanelView: View {
         }
         .onChange(of: sessionManager.currentUI) { _, s in spriteEngine.setStatus(s) }
         .onChange(of: sessionManager.pet) { _, p in spriteEngine.setPet(p) }
+        .sheet(item: Binding(
+            get: { installer.pending },
+            set: { if $0 == nil { installer.cancel() } }
+        )) { prompt in
+            InstallPromptView(prompt: prompt)
+        }
     }
 
     // MARK: - Mascot Stage
