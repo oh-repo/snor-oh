@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A speech bubble that auto-dismisses after a set duration.
@@ -57,6 +58,21 @@ final class BubbleManager {
     private(set) var tapAction: (() -> Void)?
 
     private var dismissTimer: Timer?
+    private var userReturnedObserver: NSObjectProtocol?
+
+    init() {
+        userReturnedObserver = NotificationCenter.default.addObserver(
+            forName: .userReturned, object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.handleUserReturned() }
+        }
+    }
+
+    deinit {
+        if let obs = userReturnedObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+    }
 
     // MARK: - Bubble Sources
 
@@ -116,6 +132,13 @@ final class BubbleManager {
         if let msg = Self.taskCompletedMessages.randomElement() {
             show(msg, durationMs: 4000)
         }
+    }
+
+    @MainActor
+    private func handleUserReturned() {
+        let collector = (NSApp.delegate as? AppDelegate)?.awayDigestCollector
+        guard let msg = collector?.welcomeBackSummary() else { return }
+        show(msg, durationMs: 8000)
     }
 
     /// Dismiss the current bubble.
