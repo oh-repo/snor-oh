@@ -426,7 +426,7 @@ enum SmartImport {
             )
             guard let cropped = srcImage.cropping(to: srcRect) else { continue }
 
-            stripCtx.interpolationQuality = .none
+            stripCtx.interpolationQuality = .high
             stripCtx.draw(
                 cropped,
                 in: CGRect(x: cellX + ox, y: drawY, width: scaledW, height: scaledH)
