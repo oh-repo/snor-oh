@@ -92,24 +92,24 @@ struct SetupWizard: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 featureRow(
+                    symbol: "tray.full.fill",
+                    title: "Bucket — stash anything",
+                    detail: "Drop files, images, text on the mascot. Searchable screenshots, inline resize, convert, OCR, translate — all on-device."
+                )
+                featureRow(
                     symbol: "pawprint.fill",
                     title: "A mascot that cares",
-                    detail: "Pixel pet reacts to your terminals, Claude Code, and when tasks finish."
+                    detail: "Pixel pet reacts to terminals, Claude Code, and the weight of what it's carrying."
                 )
                 featureRow(
                     symbol: "rectangle.stack.fill",
                     title: "Live session panel",
-                    detail: "See every open terminal and Claude session — Working… dots tell you what's busy."
-                )
-                featureRow(
-                    symbol: "tray.full.fill",
-                    title: "Smart clipboard",
-                    detail: "Drag anything onto the mascot. Multi-bucket storage with auto-routing rules."
+                    detail: "Every terminal and Claude session at a glance — Working… dots say what's busy."
                 )
                 featureRow(
                     symbol: "bolt.fill",
                     title: "Quick paste anywhere",
-                    detail: "⌘⇧V opens recent items — pick one and it pastes straight into your focused app."
+                    detail: "⌘⇧V pops recent items and pastes straight into your focused app."
                 )
             }
             .frame(maxWidth: 340)
